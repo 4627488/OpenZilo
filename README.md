@@ -30,6 +30,11 @@ This repository contains the Python SDK and CLI for scanning and connecting to a
 
 It documents protocol v4 on firmware `V2.000.0001.0015`. Check device behavior on your own hardware.
 
+## News
+
+- We released [OpenZilo-HMM](https://github.com/ziloai/OpenZilo-HMM), an AI framework for training custom gestures with the OpenZilo ring.
+- We released an AI-powered ring sizing tool. Try it by searching for the **“Zilo”** mini program in WeChat.
+
 ## Development Kits
 
 OpenZilo currently includes two development kits: **OpenZilo Q** and **OpenZilo X**.

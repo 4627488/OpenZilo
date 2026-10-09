@@ -4,7 +4,7 @@
 
 <h1 align="center">OpenZilo Python SDK</h1>
 
-<p align="center">用 Python 读取 OpenZilo BLE 戒指的录音、动作和手势事件。</p>
+<p align="center">用于构建 ComBodied AI 的开源可穿戴硬件。</p>
 
 <p align="center">
   <a href="https://github.com/ziloai/openzilo/actions/workflows/ci.yml"><img src="https://github.com/ziloai/openzilo/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -16,12 +16,76 @@
 <p align="center">
   <a href="https://openzilo.com">官网</a> ·
   <a href="https://openzilo.com/buy">获取开发套件</a> ·
+  <a href="#开发套件">开发套件</a> ·
   <a href="#ai-编程工具">AI 编程工具</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="README.md">English</a>
 </p>
 
-这个仓库提供 Python SDK 和命令行工具：扫描、连接戒指，读取设备信息，下载录音并将 Speex 转成 WAV，以及接收 IMU、手势和按键事件。文档对应协议 v4、固件 `V2.000.0001.0015`；实际运行情况以手中的设备为准。
+OpenZilo 是一个开放开发平台，让开发者通过可穿戴硬件构建随时可用的 AI 体验。
+
+从智能戒指出发，OpenZilo 为开发者提供硬件、固件、SDK 和参考应用，连接**语音、手势、生理信号、AI 智能体、计算机、机器人与物理世界**。
+
+这个仓库提供 Python SDK 和命令行工具，用于扫描和连接 OpenZilo 戒指、读取设备信息、下载录音、将 Speex 转成 WAV，以及接收 IMU 和手势事件。
+
+文档对应协议 v4、固件 `V2.000.0001.0015`；实际运行情况以手中的设备为准。
+
+## 最新动态
+
+- 我们发布了 [OpenZilo-HMM](https://github.com/ziloai/OpenZilo-HMM)，一个基于 OpenZilo 戒指的 AI 自定义手势训练框架。
+- 我们发布了 AI 戒指选码工具，在微信搜索 **“Zilo”** 小程序即可体验。
+
+## 开发套件
+
+OpenZilo 目前提供两款开发套件：**OpenZilo Q** 和 **OpenZilo X**。
+
+如果以语音交互为主，可选择配备双麦克风的 **Q**。
+
+如果原型还需要生理信号感知，可选择 **X**。
+
+| 传感器配置 | OpenZilo Q | OpenZilo X |
+| --- | --- | --- |
+| 麦克风 | **2 个** | **1 个** |
+| IMU | **配备** | **配备** |
+| PPG 传感器 | — | **配备** |
+
+### OpenZilo Q
+
+**语音 + 手势开发套件**
+
+适用于：
+
+- AI 智能体
+- 语音交互
+- 手势控制
+- 机器人
+- 计算机与移动设备
+- 实验性人机智能交互界面
+
+### OpenZilo X
+
+**语音 + 手势 + 生理信号感知开发套件**
+
+增加生理信号感知能力，适用于构建：
+
+- 感知健康状态的 AI 智能体
+- 感知上下文的应用
+- 多模态交互
+- 个人感知实验
+- 可穿戴 AI 研究
+
+## 可以构建什么？
+
+OpenZilo 的定位是开放的交互层，而非封闭的消费设备。
+
+你可以用它构建：
+
+- **AI 智能体** — 通过语音和手势调用智能体并与其交互
+- **机器人** — 将可穿戴设备的输入连接到机器人与物理系统
+- **桌面与移动端** — 创建新的快捷操作、工作流和 AI 界面
+- **AR / XR** — 探索空间计算中细微的可穿戴交互
+- **健康感知 AI** — 将生理信号与个人情境结合
+- **实验性交互界面** — 构建我们尚未想象到的交互方式
 
 ## AI 编程工具
 
@@ -36,11 +100,17 @@
 | <img src="docs/assets/ai-tools/gemini-cli.png" alt="" width="24"> [Gemini CLI](docs/ai-tools.md#gemini-cli) | `gemini` | [`GEMINI.md`](GEMINI.md) |
 | <img src="docs/assets/ai-tools/opencode.png" alt="" width="24"> [OpenCode](docs/ai-tools.md#opencode) | `opencode` | [`AGENTS.md`](AGENTS.md) |
 
-可以直接提问：“读取 `llms.txt` 和 Python SDK 手册，只使用 `openzilo` 导出的 API，写一个扫描戒指并打印型号、固件版本和电量的脚本。”安装链接及跨仓库使用方法见 [接入指南](docs/ai-tools.md)。
+可以直接提问：
+
+> “读取 `llms.txt` 和 Python SDK 手册，使用 `openzilo` 导出的 API，写一个扫描戒指并打印型号、固件版本和电量的脚本。”
+
+安装链接及跨仓库使用方法见 [接入指南](docs/ai-tools.md)。
 
 ## 快速开始
 
 需要 Python 3.10+ 和 BLE 适配器；Linux 还需要 BlueZ 和蓝牙访问权限。
+
+从仓库安装：
 
 ```bash
 git clone https://github.com/ziloai/openzilo.git
@@ -50,7 +120,9 @@ python -m openzilo scan --timeout 10
 python -m openzilo info --address AA:BB:CC:DD:EE:FF
 ```
 
-把示例地址换成扫描结果。Python 调用示例：
+把示例地址换成 `scan` 返回的地址。
+
+Python 调用示例：
 
 ```python
 import asyncio
@@ -66,11 +138,15 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-[examples](examples/) 中还有下载录音和读取 IMU 的例子。只有将 Speex 转成 WAV 时才需要 `ffmpeg`。`audio-clear` 会删除设备上的录音，调用时必须显式提供 `--yes`。
+[examples](examples/) 中还有下载录音和读取 IMU 数据流的例子。
+
+如果需要将 Speex 转成 WAV，请安装 `ffmpeg`。`audio-clear` 会删除设备上的录音，调用时必须显式提供 `--yes`。
 
 ## 论文与合作机构
 
-[ComBodied Agents: a New Paradigm of Human-Centric Agentic AI](https://arxiv.org/abs/2608.10915) 收录于 [OpenZilo 官网](https://openzilo.com)研究栏目。[PDF](https://arxiv.org/pdf/2608.10915) · [Hugging Face Papers](https://huggingface.co/papers/2608.10915)
+[ComBodied Agents: a New Paradigm of Human-Centric Agentic AI](https://arxiv.org/abs/2608.10915) 收录于 [OpenZilo 官网](https://openzilo.com)。
+
+[PDF](https://arxiv.org/pdf/2608.10915) · [Hugging Face Papers](https://huggingface.co/papers/2608.10915)
 
 <p align="center"><a href="https://openzilo.com"><img src="docs/assets/partners-panel.png" alt="OpenZilo 研究与产业伙伴" width="1000"></a></p>
 
