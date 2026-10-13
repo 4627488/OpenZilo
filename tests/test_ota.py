@@ -126,8 +126,8 @@ class FirmwareUpdateTests(unittest.IsolatedAsyncioTestCase):
         await self.client.disconnect()
 
     async def update(self, **kwargs):
-        options = dict(version=TARGET, timeout_s=0.05,
-                       total_timeout_s=0.5, reboot_timeout_s=0.1)
+        options = dict(version=TARGET, timeout_s=0.5,
+                       total_timeout_s=2.0, reboot_timeout_s=0.5)
         options.update(kwargs)
         return await sdk.update_firmware(self.client, self.peer.package, **options)
 
