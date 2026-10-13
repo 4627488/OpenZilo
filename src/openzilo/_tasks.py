@@ -27,6 +27,8 @@ def start_background_task(tasks: set[asyncio.Task[Any]], awaitable: Awaitable[An
 
 
 async def await_before(awaitable: Awaitable[Any], deadline: float, message: str) -> Any:
+    # Unlike asyncio.wait_for on Python 3.10/3.11, this never swallows a cancellation
+    # that arrives just as the awaited operation finishes.
     task = asyncio.ensure_future(awaitable)
     try:
         done, _pending = await asyncio.wait(

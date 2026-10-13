@@ -17,6 +17,7 @@ from ._protocol import AudioCommand, ensure_success
 from ._client import OpenZiloClient
 from ._codec import _validate_opus_packet, build_opus_recording
 from ._audio import _audio_operation, _PacketInbox
+from ._tasks import await_before
 
 _logger = logging.getLogger(__name__)
 
@@ -71,7 +72,11 @@ async def set_live_audio_subscription(
     if enabled and client._audio_owner not in (None, asyncio.current_task()):
         raise ProtocolError("Another audio operation is already active")
     timeout = client.command_timeout_s if timeout_s is None else timeout_s
-    return await asyncio.wait_for(_set_live_audio_subscription(client, enabled, timeout), timeout)
+    deadline = asyncio.get_running_loop().time() + max(0.0, timeout)
+    return await await_before(
+        _set_live_audio_subscription(client, enabled, timeout), deadline,
+        "Timed out waiting for live subscription response",
+    )
 
 
 async def _set_live_audio_subscription(
@@ -162,7 +167,10 @@ async def receive_live_audio_file(
             if on_subscribed is not None:
                 ready = on_subscribed()
                 if inspect.isawaitable(ready):
-                    await asyncio.wait_for(ready, timeout_s)
+                    await await_before(
+                        ready, asyncio.get_running_loop().time() + timeout_s,
+                        "on_subscribed callback timed out",
+                    )
             first = await inbox.wait(timeout_s)
             if first.command != AudioCommand.LIVE_START:
                 raise ProtocolError("Live recording did not begin with START")
@@ -187,7 +195,7 @@ async def receive_live_audio_file(
                     if on_packet is not None:
                         result = on_packet(frame)
                         if inspect.isawaitable(result):
-                            await asyncio.wait_for(result, max(0.0, deadline - asyncio.get_running_loop().time()))
+                            await await_before(result, deadline, "Live recording exceeded its time limit")
                 elif packet.command == AudioCommand.LIVE_END:
                     end = parse_live_audio_end(packet.body)
                     if end.session_id != start.session_id:

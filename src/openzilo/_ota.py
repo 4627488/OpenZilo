@@ -21,6 +21,7 @@ from ._protocol import (
 )
 from ._client import _ota_context, OpenZiloClient
 from ._device import get_system_info, SystemInfo
+from ._tasks import await_before
 
 
 def _validate_firmware_package(
@@ -48,10 +49,9 @@ def _validate_firmware_package(
 
 
 async def _ota_timed(operation: Awaitable[Any], timeout: float, phase: str) -> Any:
-    try:
-        return await asyncio.wait_for(operation, timeout=max(0.0, timeout))
-    except asyncio.TimeoutError as exc:
-        raise TimeoutError(f"Firmware update timed out during {phase}; installation is unconfirmed") from exc
+    deadline = asyncio.get_running_loop().time() + max(0.0, timeout)
+    message = f"Firmware update timed out during {phase}; installation is unconfirmed"
+    return await await_before(operation, deadline, message)
 
 
 async def _wait_ota_packet(
