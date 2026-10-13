@@ -26,7 +26,7 @@ OpenZilo 是一个开放开发平台，让开发者通过可穿戴硬件构建�
 
 从智能戒指出发，OpenZilo 为开发者提供硬件、固件、SDK 和参考应用，连接**语音、手势、生理信号、AI 智能体、计算机、机器人与物理世界**。
 
-这个仓库提供 Python SDK 和命令行工具，用于扫描和连接 OpenZilo 戒指、读取设备信息、下载录音、将 Speex 转成 WAV，以及接收 IMU 和手势事件。
+这个仓库提供 Python SDK 和命令行工具，用于扫描和连接 OpenZilo 戒指、读取设备信息、下载录音、将 Speex 或双声道 Opus 转成 WAV，以及接收 IMU 和手势事件。
 
 文档对应协议 v4、固件 `V2.001.0002.0000`；实际运行情况以手中的设备为准。
 
@@ -108,19 +108,19 @@ OpenZilo 的定位是开放的交互层，而非封闭的消费设备。
 
 ## 快速开始
 
-需要 Python 3.10+ 和 BLE 适配器；Linux 还需要 BlueZ 和蓝牙访问权限。
+需要 [uv](https://docs.astral.sh/uv/getting-started/installation/)、Python 3.10+（可由 uv 自动安装）和 BLE 适配器；Linux 还需要 BlueZ 和蓝牙访问权限。
 
 从仓库安装：
 
 ```bash
 git clone https://github.com/ziloai/openzilo.git
 cd openzilo
-python -m pip install -e .
-python -m openzilo scan --timeout 10
-python -m openzilo info --address AA:BB:CC:DD:EE:FF
+uv sync
+uv run openzilo scan --timeout 10
+uv run openzilo info --address AA:BB:CC:DD:EE:FF
 ```
 
-把示例地址换成 `scan` 返回的地址。
+把示例地址换成 `scan` 返回的地址。在自己的 uv 项目中使用 SDK，运行 `uv add git+https://github.com/ziloai/openzilo`。不用 uv 时，`python -m pip install -e .` 同样可用。
 
 Python 调用示例：
 
@@ -140,7 +140,7 @@ asyncio.run(main())
 
 [examples](examples/) 中还有下载录音和读取 IMU 数据流的例子。
 
-如果需要将 Speex 转成 WAV，请安装 `ffmpeg`。`audio-clear` 会删除设备上的录音，调用时必须显式提供 `--yes`。
+如果需要将 Speex 或双声道 Opus 转成 WAV，请安装 `ffmpeg`。`audio-clear` 会删除设备上的录音，调用时必须显式提供 `--yes`。
 
 ## 论文与合作机构
 

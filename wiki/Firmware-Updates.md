@@ -8,7 +8,7 @@ Firmware: **V2.001.0002.0000** · Protocol: **v4** · Python SDK: **0.5.0**
 
 This guide targets firmware `V2.001.0002.0000`; the version label does not by itself mean an update package is available. Use only a package and updater explicitly provided for your hardware in an official release announcement.
 
-This checkout adds `update_firmware()` and `ota-update` for application firmware updates. The addition is pending release and hardware validation; the SDK version label above does not mean an already installed 0.5.0 package includes it. Check `python -m openzilo ota-update --help` in your installation. An official compatible update package is still required.
+This checkout adds `update_firmware()` and `ota-update` for application firmware updates. The addition is pending release and hardware validation; the SDK version label above does not mean an already installed 0.5.0 package includes it. Check `uv run openzilo ota-update --help` in your installation. An official compatible update package is still required.
 
 ## When an official update is available
 
@@ -20,10 +20,10 @@ This checkout adds `update_firmware()` and `ota-update` for application firmware
 
 ## SDK command
 
-Install the reviewed SDK checkout with `python -m pip install -e .` from its repository directory. After completing the preparation above, run:
+Run `uv sync` in the reviewed SDK checkout. After completing the preparation above, run:
 
 ```bash
-python -m openzilo ota-update --address "DEVICE_ADDRESS" "path/to/official-update.bin" --version V2.001.0002.0000 --sha256 "SHA256_FROM_RELEASE" --model "MODEL_FROM_RELEASE"
+uv run openzilo ota-update --address "DEVICE_ADDRESS" "path/to/official-update.bin" --version V2.001.0002.0000 --sha256 "SHA256_FROM_RELEASE" --model "MODEL_FROM_RELEASE"
 ```
 
 Replace the address, file path, checksum, and model with the actual values. The file name is a placeholder, not a published asset. `--version` must match the package's release. The optional `--sha256` and `--model` check the package bytes and connected model respectively; they do not establish compatibility with the starting firmware version.

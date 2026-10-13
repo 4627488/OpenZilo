@@ -23,10 +23,15 @@ classifiers = [
 ]
 dependencies = ["bleak>=0.21"]
 
+[project.scripts]
+openzilo = "openzilo._cli:run"
+
 [project.urls]
 Homepage = "https://github.com/ziloai/openzilo"
 Repository = "https://github.com/ziloai/openzilo"
 
 [tool.setuptools]
-py-modules = ["openzilo"]
 package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
