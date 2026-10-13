@@ -14,5 +14,5 @@ This repository contains the Python BLE SDK and CLI for compatible OpenZilo ring
 - Never commit real device addresses, serial numbers, CPUIDs, recordings, captures, firmware, or credentials. Follow [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
 - Keep `audio-clear` gated by its explicit `--yes` confirmation.
 - Run the smallest relevant check first. For protocol or parser changes, run `python -m unittest discover -s tests -v`; CI also compiles `src` and checks `python -m openzilo --help`.
-- Hardware-dependent claims require validation on the target device. The documented baseline is protocol v4 and firmware `V2.000.0001.0015`.
+- Hardware-dependent claims require validation on the target device. The documented baseline is protocol v4 and firmware `V2.001.0002.0000`.
 - Software and documentation use MPL-2.0; hardware design files, if published, use CERN-OHL-W-2.0. The third-party logos are separate marks.

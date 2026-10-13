@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
+import math
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import IntEnum
 import os
+import re
 from pathlib import Path
 import shutil
 import struct
@@ -119,6 +122,14 @@ ERROR_MESSAGES = {
 class SystemCommand(IntEnum):
     GET_INFO = 0x0101
     INFO_RESP = 0x0102
+
+
+class _OtaCommand(IntEnum):
+    NOTIFY = 1005
+    NOTIFY_RESP = 1105
+    GET_PACKET = 2001
+    PACKET_RESP = 2101
+    UPDATE_RESULT = 2201
 
 
 class LogCommand(IntEnum):
@@ -641,7 +652,7 @@ class NusClient:
         if self._client is None:
             return
         try:
-            if self._notify_started:
+            if self._notify_started and self._client.is_connected:
                 await self._client.stop_notify(self.tx_uuid)
         finally:
             self._notify_started = False
@@ -710,6 +721,8 @@ class OpenZiloClient:
         self._protocol_errors: asyncio.Queue[ProtocolError] = asyncio.Queue()
         self._disconnected = asyncio.Event()
         self._disconnected.set()
+        self._write_lock = asyncio.Lock()
+        self._firmware_update_active = False
 
     @staticmethod
     async def discover(*args: Any, **kwargs: Any) -> list[BleDeviceInfo]:
@@ -743,7 +756,9 @@ class OpenZiloClient:
             self._on_disconnect()
 
     async def send_command(self, command: int | IntEnum, body: bytes = b"") -> None:
-        await self.transport.write(encode_packet(int(command), body))
+        # Keep fragmented writes (including automatic time replies) contiguous.
+        async with self._write_lock:
+            await self.transport.write(encode_packet(int(command), body))
 
     async def request(
         self,
@@ -1530,6 +1545,221 @@ def parse_system_info(body: bytes) -> SystemInfo:
         cpuid=cpuid,
         model=model,
     )
+
+
+def _validate_firmware_package(
+    firmware: bytes,
+    version: str,
+    sha256: str | None,
+) -> bytes:
+    if not isinstance(firmware, (bytes, bytearray, memoryview)):
+        raise TypeError("firmware must contain the update package bytes")
+    data = bytes(firmware)
+    if not data or len(data) > 0xFFFFFFFF:
+        raise ValueError("Firmware package size must be between 1 and 4294967295 bytes")
+    if not re.fullmatch(r"V[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+", version) or len(version) > 63:
+        raise ValueError("version must be a Vx.xxx.xxxx.xxxx string of at most 63 bytes")
+    if sha256 is not None:
+        if not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+            raise ValueError("sha256 must contain exactly 64 hexadecimal characters")
+        if hashlib.sha256(data).hexdigest() != sha256.lower():
+            raise ValueError("Firmware package SHA-256 mismatch")
+    return data
+
+
+async def _ota_timed(operation: Awaitable[Any], timeout: float, phase: str) -> Any:
+    try:
+        return await asyncio.wait_for(operation, timeout=max(0.0, timeout))
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(f"Firmware update timed out during {phase}; installation is unconfirmed") from exc
+
+
+async def _wait_ota_packet(
+    client: OpenZiloClient,
+    queue: asyncio.Queue[Packet],
+    timeout: float,
+) -> Packet:
+    # Notifications and the reboot disconnect may arrive in the same event-loop turn.
+    # The local queue survives disconnect, unlike the ordinary command queues.
+    if not client._protocol_errors.empty():
+        raise client._protocol_errors.get_nowait()
+    if not queue.empty():
+        return queue.get_nowait()
+    packet_task = asyncio.create_task(queue.get())
+    error_task = asyncio.create_task(client._protocol_errors.get())
+    disconnect_task = asyncio.create_task(client._disconnected.wait())
+    tasks = {packet_task, error_task, disconnect_task}
+    try:
+        done, _ = await asyncio.wait(tasks, timeout=max(0.0, timeout),
+                                     return_when=asyncio.FIRST_COMPLETED)
+        if error_task in done:
+            raise error_task.result()
+        if packet_task in done:
+            return packet_task.result()
+        if disconnect_task in done:
+            raise TransportError("BLE disconnected before OTA transfer confirmation; installation is unconfirmed")
+        raise TimeoutError("Timed out waiting for OTA data request or result; installation is unconfirmed")
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _verify_firmware_restart(
+    client: OpenZiloClient,
+    before: SystemInfo,
+    version: str,
+    timeout_s: float,
+    reboot_timeout_s: float,
+) -> SystemInfo:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + reboot_timeout_s
+    await _ota_timed(client._disconnected.wait(), reboot_timeout_s, "waiting for device reboot")
+    last_error: Exception | None = None
+    while loop.time() < deadline:
+        remaining = min(timeout_s, deadline - loop.time())
+        try:
+            await _ota_timed(client.disconnect(), remaining, "connection cleanup")
+            await _ota_timed(client.connect(), min(timeout_s, deadline - loop.time()), "reconnection")
+            after = await _ota_timed(
+                get_system_info(client, timeout_s=timeout_s),
+                min(timeout_s, deadline - loop.time()), "version verification",
+            )
+        except (TransportError, TimeoutError, OSError) as exc:
+            last_error = exc
+            await asyncio.sleep(min(1.0, max(0.0, deadline - loop.time())))
+            continue
+        if after.model != before.model or (before.cpuid and after.cpuid != before.cpuid) or (
+            before.sn and after.sn != before.sn
+        ):
+            raise ProtocolError("Reconnected device identity differs; installation is unconfirmed")
+        if after.firmware_version != version:
+            raise ProtocolError(
+                f"Firmware version verification failed: expected {version}, "
+                f"device reports {after.firmware_version}"
+            )
+        return after
+    raise TimeoutError("Could not reconnect and verify the new firmware; installation is unconfirmed") from last_error
+
+
+async def update_firmware(
+    client: OpenZiloClient,
+    firmware: bytes,
+    *,
+    version: str,
+    sha256: str | None = None,
+    expected_model: str | None = None,
+    progress: Callable[[int, int], None] | None = None,
+    timeout_s: float = 30.0,
+    total_timeout_s: float = 600.0,
+    reboot_timeout_s: float = 90.0,
+) -> SystemInfo:
+    """Upload an official APP package, await reboot, and verify its running version.
+
+    Use this connected client exclusively until the call finishes. Stop recording
+    and IMU streaming first. Package bytes are transmitted unchanged. The caller
+    must select a release compatible with the device and its starting version.
+    ``progress(sent, total)`` reports transfer progress, not installation success.
+    The return value is system information read after reboot. A timeout or
+    disconnect before confirmation never implies a successful installation.
+    """
+    data = _validate_firmware_package(firmware, version, sha256)
+    for name, value in (("timeout_s", timeout_s), ("total_timeout_s", total_timeout_s),
+                        ("reboot_timeout_s", reboot_timeout_s)):
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be finite and greater than zero")
+    if client._firmware_update_active:
+        raise ProtocolError("A firmware update is already running on this client")
+    if not client.is_connected:
+        raise TransportError("Connect the client before updating firmware")
+
+    commands = (_OtaCommand.NOTIFY_RESP, _OtaCommand.GET_PACKET, _OtaCommand.UPDATE_RESULT)
+    queue: asyncio.Queue[Packet] = asyncio.Queue(maxsize=16)
+    queue_error: ProtocolError | None = None
+
+    def on_packet(packet: Packet) -> None:
+        nonlocal queue_error
+        # This session owns OTA responses, so do not accumulate duplicate copies.
+        client._drain_queue(int(packet.command))
+        if queue.full():
+            queue_error = ProtocolError("OTA response queue overflow")
+        else:
+            queue.put_nowait(packet)
+
+    client._firmware_update_active = True
+    for command in commands:
+        client._drain_queue(int(command))
+        client.add_packet_handler(command, on_packet)
+    client._drain_protocol_errors()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + total_timeout_s
+
+    def remaining() -> float:
+        budget = deadline - loop.time()
+        if budget <= 0:
+            raise TimeoutError("Firmware transfer exceeded total_timeout_s; installation is unconfirmed")
+        return min(timeout_s, budget)
+
+    try:
+        budget = remaining()
+        before = await _ota_timed(get_system_info(client, timeout_s=timeout_s), budget, "device check")
+        if expected_model is not None and before.model != expected_model:
+            raise ProtocolError("Device model does not match expected_model")
+        if before.firmware_version == version:
+            raise ProtocolError("Device already reports the target version; no update was started")
+        notify = (BinaryWriter().u32(2).string_u32(version).u32(len(data))
+                  .u16(crc16_compute(data)).build())
+        while not queue.empty():
+            queue.get_nowait()
+        budget = remaining()
+        await _ota_timed(client.send_command(_OtaCommand.NOTIFY, notify), budget, "update request")
+        sent_end: int | None = None
+        if progress is not None:
+            progress(0, len(data))
+        while True:
+            if queue_error is not None:
+                raise queue_error
+            packet = await _wait_ota_packet(client, queue, remaining())
+            if queue_error is not None:
+                raise queue_error
+            reader = BinaryReader(packet.body)
+            if packet.command in (_OtaCommand.NOTIFY_RESP, _OtaCommand.UPDATE_RESULT):
+                if len(packet.body) != 2:
+                    raise ProtocolError("Invalid OTA status response length")
+                ensure_success(reader.u16())
+                if packet.command == _OtaCommand.UPDATE_RESULT:
+                    if sent_end != len(data):
+                        raise ProtocolError("OTA success arrived before the package was transferred")
+                    break
+                continue
+            if len(packet.body) != 12:
+                raise ProtocolError("Invalid OTA data request length")
+            ensure_success(reader.u16())
+            upgrade_type, offset, window = reader.u16(), reader.u32(), reader.u32()
+            # Subsequent requests use type 0; type 2 denotes the user application.
+            if upgrade_type not in (0, 2):
+                raise ProtocolError("Unexpected OTA upgrade type")
+            if not 1 <= window <= 4096 or offset >= len(data):
+                raise ProtocolError("Invalid OTA offset or window size")
+            if sent_end is not None and offset > sent_end:
+                raise ProtocolError("OTA request skipped bytes that were never sent")
+            # A nonzero first offset is the device's continuation point. Repeated
+            # requests are answered from the same immutable package bytes.
+            end = min(offset + window, len(data))
+            body = BinaryWriter().u16(0).u32(offset).u32(end - offset).bytes(data[offset:end]).build()
+            budget = remaining()
+            await _ota_timed(client.send_command(_OtaCommand.PACKET_RESP, body), budget, "data transfer")
+            previous = sent_end or 0
+            sent_end = max(previous, end)
+            if progress is not None and sent_end > previous:
+                progress(sent_end, len(data))
+        return await _verify_firmware_restart(client, before, version, timeout_s, reboot_timeout_s)
+    finally:
+        for command in commands:
+            client.remove_packet_handler(command, on_packet)
+            client._drain_queue(int(command))
+        client._firmware_update_active = False
 
 
 async def send_time_response(
@@ -2358,6 +2588,20 @@ async def cmd_audio_download(args: argparse.Namespace) -> None:
     print(f"file info: {info}")
 
 
+async def cmd_ota_update(args: argparse.Namespace) -> None:
+    # Reject corrupt or invalid input before opening a BLE session.
+    data = _validate_firmware_package(args.firmware.read_bytes(), args.version, args.sha256)
+    print("OTA transfer progress is not installation confirmation; keep the ring nearby.")
+    async with OpenZiloClient(address=args.address) as client:
+        info = await update_firmware(
+            client, data, version=args.version, sha256=args.sha256,
+            expected_model=args.model, progress=ProgressPrinter(prefix="OTA transfer"),
+            timeout_s=args.timeout, total_timeout_s=args.total_timeout,
+            reboot_timeout_s=args.reboot_timeout,
+        )
+    print(f"Firmware update verified after reboot: {info.firmware_version}")
+
+
 async def cmd_audio_decode(args: argparse.Namespace) -> None:
     data = args.input.read_bytes()
     playable = build_playable_audio(
@@ -2447,6 +2691,19 @@ def build_parser() -> argparse.ArgumentParser:
     audio_download.add_argument("--timeout", type=float, default=30.0)
     add_audio_decode_args(audio_download)
     audio_download.set_defaults(func=cmd_audio_download)
+
+    ota = subparsers.add_parser(
+        "ota-update", help="Install an official APP update package and verify the running version.",
+    )
+    add_connection_args(ota)
+    ota.add_argument("firmware", type=Path, help="Official update package, transmitted unchanged.")
+    ota.add_argument("--version", required=True, help="Target version from the release notes.")
+    ota.add_argument("--sha256", help="Expected SHA-256 from the official release.")
+    ota.add_argument("--model", help="Expected model string returned by the info command.")
+    ota.add_argument("--timeout", type=float, default=30.0, help="Per-operation timeout in seconds.")
+    ota.add_argument("--total-timeout", type=float, default=600.0, help="Overall transfer time limit.")
+    ota.add_argument("--reboot-timeout", type=float, default=90.0, help="Reboot and verification time limit.")
+    ota.set_defaults(func=cmd_ota_update)
 
     audio_decode = subparsers.add_parser(
         "audio-decode",
@@ -2572,6 +2829,7 @@ __all__ = [
     "split_raw_speex_packets",
     "start_sensor_report",
     "stop_sensor_report",
+    "update_firmware",
     "wait_sensor_data",
     "wait_sensor_double_tap_event",
     "wait_sensor_gesture_event",

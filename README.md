@@ -28,7 +28,7 @@ Starting with smart rings, OpenZilo provides developers with hardware, firmware,
 
 This repository contains the Python SDK and CLI for scanning and connecting to an OpenZilo ring, reading device information, downloading recordings, converting Speex to WAV, and receiving IMU and gesture events.
 
-It documents protocol v4 on firmware `V2.000.0001.0015`. Check device behavior on your own hardware.
+It documents protocol v4 on firmware `V2.001.0002.0000`. Check device behavior on your own hardware.
 
 ## News
 

@@ -2,7 +2,7 @@
 
 > OpenZilo is a Python 3.10+ SDK and CLI for compatible BLE rings. This index points coding agents to the repository's maintained documentation. The SDK API is defined by `src/openzilo.py` and its `__all__` list.
 
-Current SDK release: 0.5.0. Documented device protocol baseline: v4, firmware `V2.000.0001.0015`. Firmware and SDK versions evolve independently. Hardware dependent behavior must be checked on the target device.
+Current SDK release: 0.5.0. Documented device protocol baseline: v4, firmware `V2.001.0002.0000`. Firmware and SDK versions evolve independently. Hardware dependent behavior must be checked on the target device.
 
 The [OpenZilo website](https://openzilo.com) describes a broader platform. Do not infer Python PPG APIs or a TypeScript package from its product concepts; use this repository's public API guide and `src/openzilo.py.__all__` for implemented SDK features.
 
@@ -14,6 +14,7 @@ The [OpenZilo website](https://openzilo.com) describes a broader platform. Do no
 - [Protocol reference (简体中文)](https://raw.githubusercontent.com/ziloai/openzilo/main/docs/protocol.zh-CN.md): v4 packet format and command bodies used by the SDK.
 - [Architecture and data flow (简体中文)](https://raw.githubusercontent.com/ziloai/openzilo/main/docs/architecture.zh-CN.md): BLE framing, recording transfer, audio decoding, and IMU events.
 - [Coding agent setup](https://raw.githubusercontent.com/ziloai/openzilo/main/docs/ai-tools.md): how to use this SDK with Codex, Claude Code, and other coding tools.
+- [Ring user guide](https://github.com/ziloai/OpenZilo/wiki): first use, buttons, LED indicators, and firmware updates.
 
 ## Website and research
 

@@ -1,6 +1,6 @@
 # OpenZilo Python SDK 使用手册
 
-SDK 是单文件模块 `src/openzilo.py`，当前版本为 `0.5.0`。本手册列出可直接调用的类型、函数和使用示例。
+SDK 是单文件模块 `src/openzilo.py`，当前版本为 `0.5.0`。本手册面向固件 `V2.001.0002.0000`、协议 v4，列出本版本适用的类型、函数和使用示例。
 
 ## 文档导航
 
@@ -15,7 +15,7 @@ SDK 是单文件模块 `src/openzilo.py`，当前版本为 `0.5.0`。本手册�
 
 录音保存后，设备会直接上报连续的 `0x0505`，前面没有 `0x0504` 文件信息。已连接的应用可用 `receive_auto_audio_file()` 接收；错过上报时再按文件索引下载。
 
-实时 IMU 需要设备先进入手势模式，再调用 `start_sensor_report()`。`0x0605` 返回批量采样。HMM 手势事件 `0x0702` 使用设备本地 IMU，不要求开启这条实时上报链路。按键与事件字段见[协议参考](protocol.zh-CN.md#56-动作事件)。
+实时 IMU 需要设备先进入手势模式并保持 BLE 连接，再调用 `start_sensor_report()`。`0x0605` 返回批量采样。敲击检测事件 `0x0701` 使用设备本地 IMU，不要求开启实时数据上报。按键与事件字段见[协议参考](protocol.zh-CN.md#56-动作事件)。
 
 ## 快速开始
 
@@ -122,10 +122,10 @@ print(bundle.play_path)
 | 连接会话 | `scan_rings()`、`connect_ring()`、`OpenZiloClient` | 扫描、连接、发送请求、等待设备上报 |
 | 系统信息 | `get_system_info()`、`parse_system_info()` | 获取固件版本、时间、存储、电量、SN、CPUID、型号 |
 | 校时服务 | `enable_time_sync()`、`send_time_response()` | 设备发出 `0x0401` 时自动或手动回复 `0x0402` |
+| 六轴和事件 | `start_sensor_report()`、`wait_sensor_data()`、`wait_sensor_double_tap_event()` | 接收批量 IMU 数据、敲击和按键事件 |
 | 日志 | `get_log_storage()`、`read_log_chunk()` | 获取日志空间信息并按偏移读取日志 |
 | 录音接收与下载 | `receive_auto_audio_file()`、`get_audio_file_count()`、`download_audio_file()` | 即时接收刚保存的录音，或查询并下载指定录音 |
 | 录音解码保存 | `save_audio_bundle()`、`decode_audio_to_wav()` | 保存原始录音并生成 WAV |
-| 六轴和事件 | `start_sensor_report()`、`wait_sensor_data()`、`wait_sensor_gesture_event()` | 接收批量 IMU 数据和动作事件 |
 | 协议工具 | `encode_packet()`、`decode_packet()`、`PacketStream` | 调试协议包、CRC、二进制读写 |
 
 ## 推荐调用流程
@@ -231,24 +231,45 @@ async with sdk.OpenZiloClient(address=ADDRESS) as ring:
 
 只有 `start_sensor_report()` 成功返回后才能开始循环调用 `wait_sensor_data()`。后者只等待下一批 `0x0605`，不会自动发送 `0x0601`，也不会启动本地 IMU。
 
-### 接收 HMM 手势事件
+## 固件升级
 
-```text
-connect -> 确认设备处于手势模式 -> wait_sensor_gesture_event
-        -> 用户长按、完成动作并松开
-```
+当前源码新增 `update_firmware()` 和 `ota-update`，尚待发布和实机验证；已安装的 SDK 0.5.0 不一定包含此接口。它们只处理应用固件升级，不升级 bootloader。升级包需来自官方发布说明，并明确兼容设备型号和起始版本。升级前备份重要录音，停止录音、下载与 IMU 上报，保持电量和连接稳定；调用期间该连接由升级操作独占。
 
 ```python
+from pathlib import Path
+
 async with sdk.OpenZiloClient(address=ADDRESS) as ring:
-    event = await sdk.wait_sensor_gesture_event(ring, timeout_s=30.0)
-    print(event.gesture_id, sdk.sensor_gesture_name(event.gesture_id))
+    info = await sdk.update_firmware(
+        ring,
+        Path("path/to/official-update.bin").read_bytes(),
+        version="V2.001.0002.0000",
+        sha256="SHA256_FROM_RELEASE",
+        expected_model="MODEL_FROM_RELEASE",
+        progress=lambda sent, total: print(f"Transferred: {sent}/{total}"),
+    )
+    print("重启后已确认版本：", info.firmware_version)
 ```
 
-`wait_sensor_gesture_event()` 本身不要求调用 `start_sensor_report()`。只有业务还需要同时接收 `0x0605` 实时数据时，才在手势模式下开启六轴上报。
+路径、SHA-256 和型号都是占位值，需替换为发布说明中的实际值。SDK 原样发送升级包，不解析其中的固件内容。完整可运行示例见 [update_firmware.py](../examples/update_firmware.py)。
+
+| 参数 | 含义 |
+| --- | --- |
+| `client` / `firmware` | 已连接的客户端与完整升级包字节。 |
+| `version` | 必填目标版本，须与升级包一致，例如 `V2.001.0002.0000`。设备已运行此版本时拒绝重复升级。 |
+| `sha256=None` | 可选的 64 位十六进制 SHA-256；建议传入官方值。校验失败时不发送升级请求。 |
+| `expected_model=None` | 可选型号，必须与设备信息中的 `model` 完全相同。仍需自行确认起始版本兼容。 |
+| `progress=None` | 同步回调 `(sent, total)`，单位字节；只反映传输进度。设备请求续传时可能跳过已接收的前缀。 |
+| `timeout_s=30.0` | 单次设备检查、传输或重连操作的超时。 |
+| `total_timeout_s=600.0` | 前置设备检查和传输阶段的总上限。 |
+| `reboot_timeout_s=90.0` | 传输确认之后，等待重启、重连和版本核验的总上限。 |
+
+返回 `SystemInfo`，来源于设备重启并重连后的查询。SDK 核对设备身份与目标版本后才成功返回；**进度到达 100% 或蓝牙断开都不表示升级成功**。设备拒绝升级时抛出 `DeviceError`；超时、通信中断或异常响应分别通过 `TimeoutError`、`TransportError` 或 `ProtocolError` 报告。取消操作不会撤销设备已收到的升级包，失败后应重连读取版本确认状态。
+
+官方发布信息、失败处理见 [Firmware Updates](../wiki/Firmware-Updates-zh-CN.md)。
 
 ## 公开数据类型
 
-以下类型均可通过 `import openzilo as sdk` 后使用，例如 `sdk.SystemInfo`。本手册覆盖 `openzilo.py.__all__` 中的全部 84 个公开名称。
+以下类型均可通过 `import openzilo as sdk` 后使用，例如 `sdk.SystemInfo`。本手册覆盖当前固件适用的接口；SDK 为旧设备保留的兼容接口不代表当前固件支持相应功能。
 
 ### 异常类型
 
@@ -412,22 +433,14 @@ samples: tuple[SensorDataSample, ...]  # 批量采样点；第 n 个样本序号
 SensorDoubleTapEvent
 timestamp_ms: int  # 普通双击事件时间戳。
 
-SensorGestureEvent
-timestamp_ms: int  # HMM 手势事件时间戳。
-gesture_id: int    # 手势 ID；用 SensorGestureId 或 sensor_gesture_name() 解释。
-
 SensorKeyDoublePressEvent
-timestamp_ms: int  # 按键双击事件时间戳。
+timestamp_ms: int  # 本固件发送秒级设备时间；SDK 保留此历史字段名。
 
 SensorKeySinglePressEvent
-timestamp_ms: int  # 按键单击事件时间戳，单位 ms。
-
-SensorGestureId
-IDLE = 0
-ROTATE_BACK = 1
-ROTATE_FRONT = 2
-WAVE = 3
+timestamp_ms: int  # 本固件发送秒级设备时间；SDK 保留此历史字段名。
 ```
+
+断线后实时上报会关闭，本地 IMU 采集也会暂停。重新连接后，手势模式下的本地采集会恢复；实时数据仍需重新调用 `start_sensor_report()`。
 
 ## 公开函数速查表
 
@@ -443,6 +456,12 @@ WAVE = 3
 | `send_time_response()` | `await send_time_response(client, request_time, response_time=None, send_time=None)` | `None` | 手动发送 `0x0402` 校时应答。 |
 | `get_log_storage()` | `await get_log_storage(client, timeout_s=None)` | `LogStorageInfo` | 查询日志存储信息。 |
 | `read_log_chunk()` | `await read_log_chunk(client, index, offset, size, timeout_s=None)` | `bytes` | 按日志索引、偏移、长度读取日志。 |
+
+### 固件升级
+
+| 函数 | 调用方式 | 返回 | 说明 |
+| --- | --- | --- | --- |
+| `update_firmware()` | `await update_firmware(client, firmware, version=..., sha256=..., expected_model=..., progress=..., timeout_s=30, total_timeout_s=600, reboot_timeout_s=90)` | `SystemInfo` | 上传官方应用升级包，等待重启并核验运行版本，见[固件升级](#固件升级)。 |
 
 ### 录音下载
 
@@ -486,19 +505,16 @@ WAVE = 3
 
 | 函数 | 签名 | 返回值 | 使用方式 |
 | --- | --- | --- | --- |
-| `start_sensor_report()` | `await start_sensor_report(client, timeout_s=None)` | `SensorStartInfo` | 设备已处于手势模式时发送 `0x0601`，成功后开启 `0x0605` BLE 上报；不启动本地 IMU。 |
+| `start_sensor_report()` | `await start_sensor_report(client, timeout_s=None)` | `SensorStartInfo` | 设备已处于手势模式时发送 `0x0601`，成功后确保采集开启并启动 `0x0605` BLE 上报；不会切换设备模式。 |
 | `wait_sensor_data()` | `await wait_sensor_data(client, timeout_s=None)` | `SensorDataBatch` | 在 `start_sensor_report()` 成功后等待一个 `0x0605` 批量包；不会自动发送 `0x0601`。 |
 | `stop_sensor_report()` | `await stop_sensor_report(client, timeout_s=None)` | `SensorStopInfo` | 发送 `0x0603` 关闭实时上报开关，不负责停止手势模式的本地采集。 |
 | `parse_sensor_data_batch()` | `parse_sensor_data_batch(body)` | `SensorDataBatch` | 解析 `0x0605` 包体。 |
 | `wait_sensor_double_tap_event()` | `await wait_sensor_double_tap_event(client, timeout_s=None)` | `SensorDoubleTapEvent` | 等待 `0x0701` 普通双击事件。 |
-| `wait_sensor_gesture_event()` | `await wait_sensor_gesture_event(client, timeout_s=None)` | `SensorGestureEvent` | 等待 `0x0702` HMM 手势事件。 |
 | `wait_sensor_key_double_press_event()` | `await wait_sensor_key_double_press_event(client, timeout_s=None)` | `SensorKeyDoublePressEvent` | 等待 `0x0703` 按键双击事件。 |
 | `wait_sensor_key_single_press_event()` | `await wait_sensor_key_single_press_event(client, timeout_s=None)` | `SensorKeySinglePressEvent` | 等待 `0x0704` 按键单击事件。 |
 | `parse_sensor_double_tap_event()` | `parse_sensor_double_tap_event(body)` | `SensorDoubleTapEvent` | 解析 `0x0701` 包体。 |
-| `parse_sensor_gesture_event()` | `parse_sensor_gesture_event(body)` | `SensorGestureEvent` | 解析 `0x0702` 包体。 |
 | `parse_sensor_key_double_press_event()` | `parse_sensor_key_double_press_event(body)` | `SensorKeyDoublePressEvent` | 解析 `0x0703` 包体。 |
 | `parse_sensor_key_single_press_event()` | `parse_sensor_key_single_press_event(body)` | `SensorKeySinglePressEvent` | 严格解析 `0x0704` 的 4 字节时间戳包体。 |
-| `sensor_gesture_name()` | `sensor_gesture_name(gesture_id)` | `str` | 把手势 ID 转成 `idle`、`rotate_back`、`rotate_front`、`wave` 或 `unknown(<id>)`。 |
 
 ### 协议工具
 
@@ -751,14 +767,14 @@ print(bundle.play_path)
 
 ### 六轴数据
 
-设备端当前只有录音模式和手势模式，不存在第三种独立的“IMU 数据采集模式”。六轴本地采集由手势模式维护：设备启动时默认是录音模式，此时 IMU 被关闭，调用 `start_sensor_report()` 会收到错误码 `2`，SDK 将其转换为 `DeviceError(error_code=2)`。
+设备端有录音模式和手势模式。六轴本地采集由手势模式维护：设备启动时默认是录音模式，此时 IMU 被关闭，调用 `start_sensor_report()` 会收到错误码 `2`，SDK 将其转换为 `DeviceError(error_code=2)`。
 
-进入手势模式后，本地 IMU 采集已经启动：
+进入手势模式并保持 BLE 连接后，本地 IMU 开始采集；未连接时采集等待连接恢复：
 
-- `0x0601` 只打开 `0x0605` BLE 实时上报开关，并把 `sequence_start` 从 `0` 重新计数。
-- `0x0603` 只关闭实时上报开关，不停止手势模式内部使用的 IMU 采集。
+- `0x0601` 在手势模式下确保采集开启，并启动 `0x0605` BLE 实时上报。从停止状态开启时，`sequence_start` 从 `0` 计数；重复开启已经运行的上报不会重置序号。
+- `0x0603` 只关闭实时上报开关，不停止手势模式本地使用的 IMU 采集。
 - BLE 连接断开时，设备会自动关闭实时上报开关。
-- 当前固件默认采样率为 `25 Hz`，但业务代码必须以 `start_sensor_report()` 返回的 `SensorStartInfo.sample_rate_hz` 为准。
+- 采样率取决于设备配置，业务代码必须以 `start_sensor_report()` 返回的 `SensorStartInfo.sample_rate_hz` 为准。
 
 获得实时数据的完整前置顺序是：进入手势模式，让本地 IMU 启动；调用 `start_sensor_report()` 并确认其成功返回；然后才能循环调用 `wait_sensor_data()`。`wait_sensor_data()` 不发送 `0x0601`，也不会尝试切换设备模式或启动 IMU。
 
@@ -803,30 +819,12 @@ finally:
 
 `0x0701` 普通双击：
 
-该事件来自六轴双击算法。设备只在手势模式的长按手势会话期间抑制 `0x0701`，不是在录音模式长按录音期间抑制。
+该事件来自六轴双击算法。需要处于手势模式并保持 BLE 连接。等待该事件不要求先调用 `start_sensor_report()`。
 
 ```python
 event = await sdk.wait_sensor_double_tap_event(ring, timeout_s=30.0)
 print(event.timestamp_ms)
 ```
-
-`0x0702` HMM 手势：
-
-设备处于手势模式时，用户长按戒指、完成动作并松开；识别到有效手势后设备会上报 `0x0702`。等待该事件不要求先调用 `start_sensor_report()`。
-
-```python
-event = await sdk.wait_sensor_gesture_event(ring, timeout_s=30.0)
-print(event.gesture_id, sdk.sensor_gesture_name(event.gesture_id))
-```
-
-`gesture_id` 当前语义：
-
-| ID | 名称 | 说明 |
-| --- | --- | --- |
-| `0` | `idle` | 静止或无有效手势，当前设备端通常不会主动上报。 |
-| `1` | `rotate_back` | 向后旋转。 |
-| `2` | `rotate_front` | 向前旋转。 |
-| `3` | `wave` | 挥手类动作。 |
 
 `0x0703` 按键双击：
 
@@ -858,7 +856,7 @@ event = await sdk.wait_sensor_key_single_press_event(
 - 作用：等待设备主动上报的 `0x0704` 按键单击事件。
 - `ring`：已经连接的 `OpenZiloClient`。
 - `timeout_s`：最长等待秒数；为 `None` 时使用客户端的 `command_timeout_s`。
-- 返回值：`SensorKeySinglePressEvent`，其中 `timestamp_ms` 是设备上报时间戳。
+- 返回值：`SensorKeySinglePressEvent`，其中 `timestamp_ms` 在本固件中是秒级设备时间，名称沿用 SDK 历史字段。
 - 异常：等待超时抛出 SDK 的 `TimeoutError`；收到损坏包时可能抛出 `ProtocolError`。
 
 #### `parse_sensor_key_single_press_event()`
@@ -971,7 +969,7 @@ if __name__ == "__main__":
 
 ### 保存 `0x0605` 到 TXT
 
-以下示例同样要求设备处于手势模式；`0601` 只打开实时上报，不会替业务代码切换设备模式。
+以下示例同样要求设备处于手势模式；`0601` 开启实时上报，不会替业务代码切换设备模式。
 
 ```python
 import asyncio
@@ -1015,6 +1013,14 @@ python -m openzilo audio-download --address AA:BB:CC:DD:EE:FF 0 audio
 python -m openzilo time-sync --address AA:BB:CC:DD:EE:FF --seconds 60
 ```
 
+升级命令（需先替换占位值并完成[升级准备](#固件升级)）：
+
+```powershell
+python -m openzilo ota-update --address "DEVICE_ADDRESS" "path/to/official-update.bin" --version V2.001.0002.0000 --sha256 "SHA256_FROM_RELEASE" --model "MODEL_FROM_RELEASE"
+```
+
+可用 `--timeout`、`--total-timeout` 和 `--reboot-timeout` 调整超时，默认分别为 30、600 和 90 秒。
+
 CLI 不提供按时长自动采集 IMU 的命令；六轴数据请在业务脚本中调用 `start_sensor_report()`、`wait_sensor_data()`、`stop_sensor_report()`。
 
 ## 常见问题
@@ -1053,17 +1059,6 @@ python -m pip install bleak
 ### `start_sensor_report()` 返回设备忙碌
 
 设备启动时默认处于录音模式，该模式会关闭并阻止 IMU 采集，所以 `0x0601` 会返回错误码 `2`。先让用户通过有效按键单击切换到手势模式，再调用 `start_sensor_report()`；只有函数成功返回后才能开始调用 `wait_sensor_data()`。`0x0704` 只确认单击事件，不返回当前模式；如果程序不是从设备刚启动的已知状态开始，需结合设备状态提示确认当前模式。
-
-### 收不到 `0x0702` 手势事件
-
-确认设备已经处于手势模式，然后先开始等待事件，再让用户长按戒指、完成动作并松开：
-
-```text
-connect -> 确认手势模式 -> wait_sensor_gesture_event
-        -> 用户长按、完成动作并松开
-```
-
-HMM 只在识别到有效手势时上报 `0x0702`。`start_sensor_report()` 只控制 `0x0605` 实时数据，不是 HMM 的启动条件。
 
 ### 录音可以下载但不能解码
 

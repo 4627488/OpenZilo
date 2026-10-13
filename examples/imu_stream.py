@@ -11,7 +11,7 @@ ADDRESS = "AA:BB:CC:DD:EE:FF"
 
 async def main() -> None:
     async with sdk.OpenZiloClient(address=ADDRESS) as ring:
-        print("Switch the ring to gesture mode, then starting IMU reports.")
+        print("The ring must already be in gesture mode. Starting IMU reports.")
         print(await sdk.start_sensor_report(ring))
         try:
             while True:
