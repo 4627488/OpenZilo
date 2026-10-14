@@ -10,7 +10,7 @@ The ring starts in **recording mode**. A successful single press switches betwee
 | --- | --- | --- |
 | Single short press | Switch to gesture mode | Switch to recording mode |
 | Double press of the button | Report a button double-press event; keep the current mode | Same |
-| Press and hold | Start recording after about 0.3 seconds; release to finish and save | No recording action |
+| Press and hold | Start recording after about 0.3 seconds; release to finish (save unless live-only mode is enabled) | No recording action |
 | Physical double tap detected by the IMU | IMU detection is inactive | Report a double-tap event while connected |
 
 A short press is under about 0.2 seconds. Two short presses within the roughly 0.5-second double-click window count as a double press. A single press is therefore confirmed after a short delay. Wait for the blue mode-switch indication before continuing; rapid extra presses can be interpreted as a double press.
@@ -18,6 +18,8 @@ A short press is under about 0.2 seconds. Two short presses within the roughly 0
 Mode changes can be ignored while recording or immediately after a long press. A single-press event confirms that a press was recognized, not that the mode changed. Both switch directions show the same blue indication. The SDK has no query / set-mode command.
 
 ## Recording
+
+Newer firmware supports live recording. When an app enables live mode, holding the button sends audio straight to the phone or computer and **does not save it on the ring**; release to finish. Wait until the app confirms live mode before recording. Disconnecting cancels live mode, and an interrupted live recording cannot be recovered from the ring.
 
 Hold the button until green appears, speak, then release it. Below 20% reported battery, the ring refuses to start a recording and shows the error indication. Charge first if recording fails with a low battery.
 

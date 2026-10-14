@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MPL-2.0
-"""Print IMU batches after the ring has entered gesture mode."""
+"""Print IMU samples from single-sample or batch firmware."""
 
 import asyncio
 
@@ -11,7 +11,7 @@ ADDRESS = "AA:BB:CC:DD:EE:FF"
 
 async def main() -> None:
     async with sdk.OpenZiloClient(address=ADDRESS) as ring:
-        print("The ring must already be in gesture mode. Starting IMU reports.")
+        print("Starting IMU reports; gesture firmware must already be in gesture mode.")
         print(await sdk.start_sensor_report(ring))
         try:
             while True:

@@ -10,19 +10,19 @@
 
 ## 2. 安装 SDK
 
-需要 Python 3.10+ 和 BLE 适配器；Linux 还需 BlueZ 与蓝牙访问权限。录音转 WAV 需要安装 `ffmpeg`，并确保可从命令行执行。
+需要 [uv](https://docs.astral.sh/uv/getting-started/installation/)、Python 3.10+（可由 uv 自动安装）和 BLE 适配器；Linux 还需 BlueZ 与蓝牙访问权限。录音转 WAV 需要安装 `ffmpeg`，并确保可从命令行执行。
 
 ```bash
 git clone https://github.com/ziloai/OpenZilo.git
 cd OpenZilo
-python -m pip install -e .
-python -m openzilo scan --timeout 10
+uv sync
+uv run openzilo scan --timeout 10
 ```
 
 识别广播名为 `Open Zilo` 的戒指，使用扫描返回的地址或设备标识；不同操作系统的格式可能不同。下面的地址只是占位符。关闭其他正在连接戒指的应用。
 
 ```bash
-python -m openzilo info --address AA:BB:CC:DD:EE:FF
+uv run openzilo info --address AA:BB:CC:DD:EE:FF
 ```
 
 确认固件版本为 `V2.001.0002.0000`。版本不同请先核对兼容性。每条命令只在执行期间连接设备，不会留下永久连接。
@@ -32,13 +32,13 @@ python -m openzilo info --address AA:BB:CC:DD:EE:FF
 戒指启动后默认处于录音模式。按住按键，看到绿灯后说一句话，松开结束。如果之前切换过模式，请按[按键与工作模式](https://github.com/ziloai/OpenZilo/wiki/Buttons-and-Modes-zh-CN)返回录音模式。
 
 ```bash
-python -m openzilo audio-count --address AA:BB:CC:DD:EE:FF
+uv run openzilo audio-count --address AA:BB:CC:DD:EE:FF
 ```
 
 检查录音数量是否增加。使用索引 `0` 下载第一条已存录音进行测试；它不一定是刚录制的那条：
 
 ```bash
-python -m openzilo audio-download --address AA:BB:CC:DD:EE:FF 0 first-recording.wav
+uv run openzilo audio-download --address AA:BB:CC:DD:EE:FF 0 first-recording.wav
 ```
 
 播放生成的 WAV，原始录音也会保存。原始 `.bin` 不能通过改扩展名直接播放。WAV 转换失败时请检查 `ffmpeg`，保留原始文件以便重新转换。
@@ -48,7 +48,7 @@ python -m openzilo audio-download --address AA:BB:CC:DD:EE:FF 0 first-recording.
 从录音模式短按一次进入手势模式，等待蓝灯闪两次。把 `examples/imu_stream.py` 中的 `ADDRESS` 改成扫描得到的设备标识，然后运行：
 
 ```bash
-python examples/imu_stream.py
+uv run python examples/imu_stream.py
 ```
 
 运行前设备需已处于手势模式。移动手部，确认收到批量数据。若返回设备忙碌，请检查模式和连接；按 Ctrl+C 停止。敲击与按键事件 API 见 [SDK 手册](https://github.com/ziloai/OpenZilo/blob/main/docs/python-sdk.zh-CN.md)。

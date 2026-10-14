@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 import openzilo as sdk
+from openzilo import _cli as cli
 
 TARGET = "V2.001.0002.0000"
 OLD = "V2.000.0002.0001"
@@ -125,8 +126,8 @@ class FirmwareUpdateTests(unittest.IsolatedAsyncioTestCase):
         await self.client.disconnect()
 
     async def update(self, **kwargs):
-        options = dict(version=TARGET, timeout_s=0.05,
-                       total_timeout_s=0.5, reboot_timeout_s=0.1)
+        options = dict(version=TARGET, timeout_s=0.5,
+                       total_timeout_s=2.0, reboot_timeout_s=0.5)
         options.update(kwargs)
         return await sdk.update_firmware(self.client, self.peer.package, **options)
 
@@ -150,6 +151,17 @@ class FirmwareUpdateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.peer.notify_body, expected)
         self.assertEqual(progress[0], (0, len(PACKAGE)))
         self.assertEqual(progress[-1], (len(PACKAGE), len(PACKAGE)))
+        self.assert_clean()
+
+    async def test_build_suffix_is_transmitted_and_verified_exactly(self):
+        target = TARGET + "-prod-1234abcd"
+        self.peer.running_version = target
+        info = await self.update(version=target)
+        self.assertEqual(info.firmware_version, target)
+        self.assertIn(target.encode(), self.peer.notify_body)
+        # A different build of the same base version must not count as success.
+        with self.assertRaisesRegex(sdk.ProtocolError, "version verification failed"):
+            await self.update(version=TARGET + "-prod-1234abce")
         self.assert_clean()
 
     async def test_optional_ack_repeated_request_and_monotonic_progress(self):
@@ -342,6 +354,10 @@ class FirmwareUpdateTests(unittest.IsolatedAsyncioTestCase):
         await started.wait()
         with self.assertRaisesRegex(sdk.ProtocolError, "already running"):
             await self.update()
+        with self.assertRaisesRegex(sdk.ProtocolError, "owns this connection"):
+            await sdk.get_system_info(self.client)
+        with self.assertRaisesRegex(sdk.ProtocolError, "owns this connection"):
+            await sdk.receive_auto_audio_file(self.client)
         first.cancel()
         with self.assertRaises(asyncio.CancelledError):
             await first
@@ -376,11 +392,11 @@ class OtaCliTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "synthetic.ota.bin"
             path.write_bytes(b"synthetic package")
-            args = sdk.build_parser().parse_args([
+            args = cli.build_parser().parse_args([
                 "ota-update", "--address", "AA:BB:CC:DD:EE:FF", str(path),
                 "--version", TARGET, "--sha256", "0" * 64,
             ])
-            with patch.object(sdk, "OpenZiloClient") as client:
+            with patch.object(cli, "OpenZiloClient") as client:
                 with self.assertRaises(ValueError):
                     await args.func(args)
                 client.assert_not_called()

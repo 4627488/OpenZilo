@@ -5,7 +5,7 @@ Clone the repository, install the SDK, and start your coding tool from the repos
 ```bash
 git clone https://github.com/ziloai/openzilo.git
 cd openzilo
-python -m pip install -e .
+uv sync
 ```
 
 [`llms.txt`](../llms.txt) lists the API guide, protocol reference, examples, and source. The files below give each tool the same project boundaries.

@@ -26,7 +26,7 @@ OpenZilo is an open development platform for building always-available AI experi
 
 Starting with smart rings, OpenZilo provides developers with hardware, firmware, SDKs, and reference applications for connecting **voice, gestures, physiological signals, AI agents, computers, robots, and the physical world**.
 
-This repository contains the Python SDK and CLI for scanning and connecting to an OpenZilo ring, reading device information, downloading recordings, converting Speex to WAV, and receiving IMU and gesture events.
+This repository contains the Python SDK and CLI for scanning and connecting to an OpenZilo ring, reading device information, downloading recordings, converting Speex or stereo Opus to WAV, and receiving IMU and gesture events.
 
 It documents protocol v4 on firmware `V2.001.0002.0000`. Check device behavior on your own hardware.
 
@@ -107,19 +107,19 @@ See the [setup guide](docs/ai-tools.md) for installation links and using these d
 
 ## Quick start
 
-You need Python 3.10+ and a BLE adapter. On Linux, you also need BlueZ and Bluetooth access.
+You need [uv](https://docs.astral.sh/uv/getting-started/installation/), Python 3.10+ (uv can install it), and a BLE adapter. On Linux, you also need BlueZ and Bluetooth access.
 
 Install from the repository:
 
 ```bash
 git clone https://github.com/ziloai/openzilo.git
 cd openzilo
-python -m pip install -e .
-python -m openzilo scan --timeout 10
-python -m openzilo info --address AA:BB:CC:DD:EE:FF
+uv sync
+uv run openzilo scan --timeout 10
+uv run openzilo info --address AA:BB:CC:DD:EE:FF
 ```
 
-Replace the example address with one returned by `scan`.
+Replace the example address with one returned by `scan`. To use the SDK from your own uv project, run `uv add git+https://github.com/ziloai/openzilo`. Without uv, `python -m pip install -e .` also works.
 
 In Python:
 
@@ -139,7 +139,7 @@ asyncio.run(main())
 
 See the [examples](examples/) for audio download and IMU streaming.
 
-Install `ffmpeg` if you need Speex-to-WAV conversion. `audio-clear` deletes recordings from the device and requires `--yes`.
+Install `ffmpeg` if you need Speex/Opus-to-WAV conversion. `audio-clear` deletes recordings from the device and requires `--yes`.
 
 ## Research and partners
 

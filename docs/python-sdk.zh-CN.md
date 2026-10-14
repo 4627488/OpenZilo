@@ -1,21 +1,28 @@
 # OpenZilo Python SDK 使用手册
 
-SDK 是单文件模块 `src/openzilo.py`，当前版本为 `0.5.0`。本手册面向固件 `V2.001.0002.0000`、协议 v4，列出本版本适用的类型、函数和使用示例。
+SDK 是 Python 包 `openzilo`（源码在 `src/openzilo/`），当前版本为 `0.5.0`。本手册面向固件 `V2.001.0002.0000`、协议 v4，列出本版本适用的类型、函数和使用示例。
 
 ## 文档导航
 
 - [架构与数据流](architecture.zh-CN.md)：BLE 收包、录音传输、Speex 解码和 IMU 事件。
 - [协议参考](protocol.zh-CN.md)：Python SDK 当前公开功能使用的通信协议字段表，供协议联调时查阅。
 
-公开接口以 `src/openzilo.py.__all__` 为准。协议字段和数据流分别在上述两份文档中说明。
+公开接口以 `openzilo.__all__` 为准，统一从 `import openzilo` 导入；下划线开头的子模块属于内部实现，可能随版本调整。协议字段和数据流分别在上述两份文档中说明。
 
 ## 接入前
 
-设备启动后默认处于录音模式。单击会尝试切换录音和手势模式，但 SDK 没有查询或设置模式的命令；`0x0704` 只确认识别到单击，不表示切换成功。
+协议 v4 存在不同固件实现，不能仅根据基础版本号假定功能一致：
 
-录音保存后，设备会直接上报连续的 `0x0505`，前面没有 `0x0504` 文件信息。已连接的应用可用 `receive_auto_audio_file()` 接收；错过上报时再按文件索引下载。
+- 旧单点 IMU 固件：`0x0601` 启动硬件采集和上报，`0x0603` 停止采集；未实现 SDK 所定义的 `0x0701`～`0x0704` 事件上报。不要先等待按键事件再启动 IMU。
+- 手势固件：需要先进入手势模式，`0x0601`／`0x0603` 控制 BLE 上报；本地采集可继续供手势检测使用。下文动作事件定义仅适用于支持该功能的固件。
 
-实时 IMU 需要设备先进入手势模式并保持 BLE 连接，再调用 `start_sensor_report()`。`0x0605` 返回批量采样。敲击检测事件 `0x0701` 使用设备本地 IMU，不要求开启实时数据上报。按键与事件字段见[协议参考](protocol.zh-CN.md#56-动作事件)。
+SDK 兼容 22 字节单点包和批量 IMU 包，都返回 `SensorDataBatch`。单点包的 `frame_count=1`。SDK 没有能力查询或模式切换命令，不会自动判断设备是否支持手势。
+
+旧 Speex 固件录音保存后，设备可直接上报连续的 `0x0505`，前面没有 `0x0504` 文件信息。已连接的应用可用 `receive_auto_audio_file()` 接收；错过上报时再按文件索引下载。这是保存后的传输，不是边录边传。
+
+支持 Opus 录音的新固件保存后只上报 `0x050A`，`receive_auto_audio_file()` 会据此主动下载，调用方式不变。新固件还支持实时录音：订阅后按键录音的数据直接经 BLE 发送，**不保存到设备 Flash**，见[实时接收录音](#实时接收录音)。
+
+当前固件的部分录音失败路径没有错误响应。此时 SDK 仍报告 `TimeoutError`，不能据此断定是文件不存在还是设备忙碌。快速发送没有可靠的取消握手，取消 SDK 等待不表示设备已经停止发送。系统配置占位、手势识别、远程录音控制等能力不会由 SDK 模拟实现。
 
 ## 快速开始
 
@@ -31,11 +38,20 @@ import openzilo as sdk
 
 ### 安装依赖
 
-BLE 通信必须安装 `bleak`：
+推荐用 [uv](https://docs.astral.sh/uv/) 管理环境。在本仓库中运行 `uv sync`，会创建 `.venv` 并按 `uv.lock` 安装 SDK 和 `bleak`；之后用 `uv run` 执行脚本：
 
 ```powershell
-python -m pip install bleak
+uv sync
+uv run python examples/system_info.py
 ```
+
+在自己的 uv 项目中引用 SDK：
+
+```powershell
+uv add git+https://github.com/ziloai/openzilo
+```
+
+不用 uv 时，在仓库目录执行 `python -m pip install -e .`，`bleak` 会作为依赖一起安装。
 
 如果需要把戒指录音解码成 WAV，还需要安装 `ffmpeg`，并确保命令行可以执行：
 
@@ -105,7 +121,7 @@ ring = sdk.OpenZiloClient(transport=transport)
 
 ### 音频解码
 
-戒指录音 `.bin` 按 2 字节小端帧长连续存放 Speex 帧。SDK 会保留原始 `.bin`，并可借助 `ffmpeg` 解码为 `.wav`；格式说明见[录音文件格式](architecture.zh-CN.md#录音文件格式)。
+录音 `.bin` 是旧固件的 Speex 帧流，或新固件的 OP2C 双声道 Opus 文件。SDK 会保留原始 `.bin`，按内容识别编码，并借助 `ffmpeg` 解码为 `.wav`；格式说明见[录音文件格式](architecture.zh-CN.md#录音文件格式)。
 
 ```python
 bundle = sdk.save_audio_bundle(file_index=0, data=raw_audio, output_dir="audio")
@@ -113,7 +129,7 @@ print(bundle.raw_path)
 print(bundle.play_path)
 ```
 
-如果缺少 `ffmpeg`，下载录音仍然可行，但解码会抛出 `SpeexDecoderUnavailable`。
+如果缺少 `ffmpeg`，下载录音仍然可行，但解码会抛出 `SpeexDecoderUnavailable` 或 `OpusDecoderUnavailable`。
 
 ## 接口分层
 
@@ -124,7 +140,7 @@ print(bundle.play_path)
 | 校时服务 | `enable_time_sync()`、`send_time_response()` | 设备发出 `0x0401` 时自动或手动回复 `0x0402` |
 | 六轴和事件 | `start_sensor_report()`、`wait_sensor_data()`、`wait_sensor_double_tap_event()` | 接收批量 IMU 数据、敲击和按键事件 |
 | 日志 | `get_log_storage()`、`read_log_chunk()` | 获取日志空间信息并按偏移读取日志 |
-| 录音接收与下载 | `receive_auto_audio_file()`、`get_audio_file_count()`、`download_audio_file()` | 即时接收刚保存的录音，或查询并下载指定录音 |
+| 录音接收与下载 | `receive_auto_audio_file()`、`receive_live_audio_file()`、`download_audio_file()` | 接收刚保存或实时发送的录音，或查询并下载指定录音 |
 | 录音解码保存 | `save_audio_bundle()`、`decode_audio_to_wav()` | 保存原始录音并生成 WAV |
 | 协议工具 | `encode_packet()`、`decode_packet()`、`PacketStream` | 调试协议包、CRC、二进制读写 |
 
@@ -180,7 +196,7 @@ async with sdk.OpenZiloClient(address=ADDRESS) as ring:
 
 ```text
 connect -> receive_auto_audio_file 等待 -> 用户长按录音并松开
-        -> 设备保存成功后连续上报 0x0505 -> save_audio_bundle
+        -> 新固件上报 0x050A 后 SDK 下载 / 旧固件连续上报 0x0505 -> save_audio_bundle
 ```
 
 ```python
@@ -199,25 +215,44 @@ async with sdk.OpenZiloClient(address=ADDRESS) as ring:
     print(bundle.play_path)
 ```
 
-自动上报本身不会预先发送 `0x0504`，因此返回值不包含 `AudioFileInfo`。正常连续接收时 SDK 不发送额外命令；需要恢复时会在内部查询元数据，以校验文件索引并将结果限制为准确的 `data_size`。等待期间必须保持 BLE 连接，并且不能同时调用 `download_audio_file()` 或 `read_audio_frame()` 消费同一个 `0x0505` 队列。若连接建立过晚而错过主动上报，应查询录音数量后使用 `download_audio_file()` 重新下载。
+旧固件的自动上报不会预先发送 `0x0504`，因此返回值不包含 `AudioFileInfo`。正常连续接收时 SDK 不发送额外命令；需要恢复时会在内部查询元数据，以校验文件索引并将结果限制为准确的 `data_size`。等待期间必须保持 BLE 连接，并且不能同时调用 `download_audio_file()` 或 `read_audio_frame()` 消费同一个 `0x0505` 队列。若连接建立过晚而错过主动上报，应查询录音数量后使用 `download_audio_file()` 重新下载。
+
+### 实时接收录音
+
+```text
+connect -> receive_live_audio_file 订阅 -> 用户长按录音并松开
+        -> 设备实时发送 Opus -> SDK 退订 -> save_audio_bundle
+```
+
+```python
+async with sdk.OpenZiloClient(address=ADDRESS) as ring:
+    recording = await sdk.receive_live_audio_file(
+        ring,
+        on_subscribed=lambda: print("请长按戒指录音，完成后松开"),
+    )
+    bundle = sdk.save_audio_bundle(
+        file_index=0,
+        data=recording.data,
+        output_dir="audio",
+    )
+    print(bundle.play_path)
+```
+
+实时录音只适用于新固件，订阅期间的录音不保存到设备，断线或丢包后无法补回。等 `on_subscribed` 回调后再让用户录音。
 
 ### 接收批量 IMU 数据
 
 ```text
-connect -> 用户将设备切换到手势模式（本地 IMU 采集已开启）
+connect -> 仅手势固件需要预先进入手势模式
         -> start_sensor_report 成功（0x0601 -> 0x0602 error_code=0）
         -> wait_sensor_data loop（接收 0x0605）
         -> stop_sensor_report
 ```
 
-设备刚启动时默认处于录音模式。下面示例先等待用户单击戒指进入手势模式，再开启实时上报；如果设备当前模式未知，不要仅凭一次 `0x0704` 推断最终模式。
+下面示例适用于单点 IMU 固件；手势固件须预先进入手势模式。不要使用一次 `0x0704` 推断最终模式。
 
 ```python
 async with sdk.OpenZiloClient(address=ADDRESS) as ring:
-    print("请单击戒指，切换到手势模式")
-    press = await sdk.wait_sensor_key_single_press_event(ring, timeout_s=30.0)
-    print("key single press:", press.timestamp_ms)
-
     start = await sdk.start_sensor_report(ring)
     print(start)
     try:
@@ -255,7 +290,7 @@ async with sdk.OpenZiloClient(address=ADDRESS) as ring:
 | 参数 | 含义 |
 | --- | --- |
 | `client` / `firmware` | 已连接的客户端与完整升级包字节。 |
-| `version` | 必填目标版本，须与升级包一致，例如 `V2.001.0002.0000`。设备已运行此版本时拒绝重复升级。 |
+| `version` | 必填目标版本，须与升级包的完整运行版本一致，例如 `V2.001.0002.0000` 或 `V2.001.0002.0000-prod-1234abcd`；也接受 `-debug-8位十六进制哈希` 后缀。重启后精确匹配，不忽略后缀。设备已运行此版本时拒绝重复升级。 |
 | `sha256=None` | 可选的 64 位十六进制 SHA-256；建议传入官方值。校验失败时不发送升级请求。 |
 | `expected_model=None` | 可选型号，必须与设备信息中的 `model` 完全相同。仍需自行确认起始版本兼容。 |
 | `progress=None` | 同步回调 `(sent, total)`，单位字节；只反映传输进度。设备请求续传时可能跳过已接收的前缀。 |
@@ -284,17 +319,20 @@ ProtocolError
 # 协议异常，例如包头、CRC、包体长度、字段解析不符合预期。
 
 TimeoutError
-# 等待设备响应或主动上报超时。
+# 请求在排队、写入或等待响应阶段超时，或等待主动上报超时。写入被中断后需重连。
 
 DeviceError
 error_code: int  # 设备返回的非 0 错误码。
 # 设备明确返回错误时抛出，例如 busy、参数错误、文件不存在。
 
 AudioDecodeError
-# 录音数据无法解码为可播放 WAV。
+# 录音数据无法解码为可播放 WAV，或 ffmpeg 30 秒内未完成。
 
 SpeexDecoderUnavailable
 # 缺少 ffmpeg 或自定义 Speex 解码器不可用。
+
+OpusDecoderUnavailable
+# 缺少 ffmpeg，无法解码 OP2C 录音。
 ```
 
 ### BLE 和协议类型
@@ -400,6 +438,44 @@ play_size: int
 source_type: str
 source_extension: str
 
+OpusDecodeResult
+pcm_bytes: bytes          # 解码后的 16 kHz、双声道、16 bit PCM。
+pcm_config: PcmConfig     # PCM 参数。
+source_type: str          # 固定为 opus-stereo。
+source_extension: str     # 固定为 op2c。
+packet_count: int         # Opus 包数量。
+
+AudioRecordResult
+file_index: int           # 新固件 0x050A 上报的录音索引。
+
+LiveAudioSubscription
+enabled: bool             # 设备确认的实时录音订阅状态。
+
+LiveAudioStart
+session_id: int           # 实时录音会话。
+record_time: int          # 录音时间戳，单位秒。
+sample_rate: int          # 固定为 16000。
+channels: int             # 固定为 2。
+codec: int                # 固定为 3，表示 Opus。
+
+LiveAudioData
+session_id: int
+sequence: int             # 包序号，从 0 开始。
+byte_offset: int          # Opus 数据字节偏移，从 0 开始。
+data: bytes               # 一个 20 ms 双声道 Opus 包。
+
+LiveAudioEnd
+error_code: int
+session_id: int
+produced_bytes: int       # 设备编码产生的 Opus 字节数。
+sent_bytes: int           # 设备已发送的 Opus 字节数。
+dropped_frames: int       # 设备丢弃的帧数。
+
+LiveAudioRecording
+start: LiveAudioStart
+end: LiveAudioEnd
+data: bytes               # 完整 OP2C 文件，可直接解码或保存。
+
 ProgressPrinter
 # 可作为 download_audio_file(progress=...) 的进度回调。
 ```
@@ -440,7 +516,7 @@ SensorKeySinglePressEvent
 timestamp_ms: int  # 本固件发送秒级设备时间；SDK 保留此历史字段名。
 ```
 
-断线后实时上报会关闭，本地 IMU 采集也会暂停。重新连接后，手势模式下的本地采集会恢复；实时数据仍需重新调用 `start_sensor_report()`。
+重连后应重新调用 `start_sensor_report()`。本地采集是否自动恢复取决于固件实现，不能从连接状态推断。
 
 ## 公开函数速查表
 
@@ -472,10 +548,17 @@ timestamp_ms: int  # 本固件发送秒级设备时间；SDK 保留此历史字�
 | `read_audio_frame()` | `await read_audio_frame(client, file_index, frame_offset, timeout_s=None)` | `AudioDataFrame` | 普通链路低层接口，发送 `0x0506` 并等待 `0x0505`。 |
 | `end_audio_extract()` | `await end_audio_extract(client, file_index, timeout_s=None, ignore_timeout=True)` | `None` | 普通链路低层接口，发送 `0x0507` 并等待 `0x0508`。 |
 | `download_audio_file()` | `await download_audio_file(client, file_index, progress=None, timeout_s=None, quick=True)` | `tuple[AudioFileInfo, bytes]` | 完整下载录音；默认 quick 链路。 |
-| `receive_auto_audio_file()` | `await receive_auto_audio_file(client, timeout_s=None)` | `tuple[int, bytes]` | 接收录音保存后设备主动上报的连续 `0x0505`；正常连续接收时不发送提取命令。 |
+| `receive_auto_audio_file()` | `await receive_auto_audio_file(client, timeout_s=None)` | `tuple[int, bytes]` | 新固件接收 `0x050A` 后自动下载；旧固件接收连续 `0x0505`。 |
+| `wait_audio_record_result()` | `await wait_audio_record_result(client, timeout_s=None)` | `AudioRecordResult` | 只等待新固件的 `0x050A`，不下载。 |
+| `set_live_audio_subscription()` | `await set_live_audio_subscription(client, enabled, timeout_s=None)` | `LiveAudioSubscription` | 低层接口，发送 `0x050D` 并等待 `0x050E`。 |
+| `receive_live_audio_file()` | `await receive_live_audio_file(client, on_packet=None, on_subscribed=None, timeout_s=60.0, recording_timeout_s=70.0)` | `LiveAudioRecording` | 订阅并接收一段实时录音，结束后退订。 |
 | `clear_audio_files()` | `await clear_audio_files(client, timeout_s=None)` | `None` | 删除设备内所有录音，属于破坏性操作。 |
 | `parse_audio_file_info()` | `parse_audio_file_info(body)` | `AudioFileInfo` | 解析 `0x0504` 包体。 |
 | `parse_audio_data_frame()` | `parse_audio_data_frame(body)` | `AudioDataFrame` | 解析 `0x0505` 包体。 |
+| `parse_audio_record_result()` | `parse_audio_record_result(body)` | `AudioRecordResult` | 解析 `0x050A` 包体。 |
+| `parse_live_audio_start()` | `parse_live_audio_start(body)` | `LiveAudioStart` | 解析 `0x050F` 包体。 |
+| `parse_live_audio_data()` | `parse_live_audio_data(body)` | `LiveAudioData` | 解析 `0x0510` 包体。 |
+| `parse_live_audio_end()` | `parse_live_audio_end(body)` | `LiveAudioEnd` | 解析 `0x0511` 包体。 |
 
 ### 录音解码和文件保存
 
@@ -483,9 +566,12 @@ timestamp_ms: int  # 本固件发送秒级设备时间；SDK 保留此历史字�
 | --- | --- | --- | --- |
 | `save_audio_bundle()` | `save_audio_bundle(file_index, data, metadata=None, output_path=None, output_dir=None, pcm_config=None, ...)` | `AudioBundle` | 保存原始录音并生成可播放文件。 |
 | `decode_audio_to_wav()` | `decode_audio_to_wav(data, pcm_config=None, ...)` | `bytes` | 把录音字节解码成 WAV 字节。 |
-| `build_playable_audio()` | `build_playable_audio(data, pcm_config=None, ...)` | `PlayableAudio` | 自动识别 WAV 或 Speex，返回可播放音频对象。 |
+| `build_playable_audio()` | `build_playable_audio(data, pcm_config=None, ...)` | `PlayableAudio` | 自动识别 WAV、OP2C 双声道 Opus 或 Speex，返回可播放音频对象。 |
 | `build_wav_from_pcm()` | `build_wav_from_pcm(pcm_bytes, pcm_config=None)` | `bytes` | 给 PCM 数据封装 WAV 头。 |
 | `decode_speex_to_pcm()` | `decode_speex_to_pcm(data, pcm_config=None, ...)` | `SpeexDecodeResult` | 把 Speex 数据解码成 PCM。 |
+| `decode_opus_to_pcm()` | `decode_opus_to_pcm(data, ffmpeg_path="ffmpeg")` | `OpusDecodeResult` | 把 OP2C 录音解码成双声道 PCM。 |
+| `parse_opus_recording()` | `parse_opus_recording(data)` | `list[bytes]` | 校验 OP2C 文件并取出 Opus 包。 |
+| `build_opus_recording()` | `build_opus_recording(packets)` | `bytes` | 把 Opus 包封装成 OP2C 文件。 |
 | `decode_ogg_speex_with_ffmpeg()` | `decode_ogg_speex_with_ffmpeg(ogg_bytes, pcm_config=None, ffmpeg_path="ffmpeg")` | `bytes` | 用 ffmpeg 解码 Ogg Speex 为 PCM。 |
 | `parse_packetized_speex_stream()` | `parse_packetized_speex_stream(data, allow_framed_blocks=True)` | `list[bytes]` | 解析带长度字段的 Speex 包流。 |
 | `split_raw_speex_packets()` | `split_raw_speex_packets(data, quality=3, bits_size=None)` | `list[bytes]` | 按 Speex 帧大小切分原始数据。 |
@@ -505,9 +591,9 @@ timestamp_ms: int  # 本固件发送秒级设备时间；SDK 保留此历史字�
 
 | 函数 | 签名 | 返回值 | 使用方式 |
 | --- | --- | --- | --- |
-| `start_sensor_report()` | `await start_sensor_report(client, timeout_s=None)` | `SensorStartInfo` | 设备已处于手势模式时发送 `0x0601`，成功后确保采集开启并启动 `0x0605` BLE 上报；不会切换设备模式。 |
-| `wait_sensor_data()` | `await wait_sensor_data(client, timeout_s=None)` | `SensorDataBatch` | 在 `start_sensor_report()` 成功后等待一个 `0x0605` 批量包；不会自动发送 `0x0601`。 |
-| `stop_sensor_report()` | `await stop_sensor_report(client, timeout_s=None)` | `SensorStopInfo` | 发送 `0x0603` 关闭实时上报开关，不负责停止手势模式的本地采集。 |
+| `start_sensor_report()` | `await start_sensor_report(client, timeout_s=None)` | `SensorStartInfo` | 发送 `0x0601`；单点固件直接启动采集，手势固件须预先进入手势模式。 |
+| `wait_sensor_data()` | `await wait_sensor_data(client, timeout_s=None)` | `SensorDataBatch` | 在 `start_sensor_report()` 成功后等待一个 `0x0605` 单点或批量包；不会自动发送 `0x0601`。 |
+| `stop_sensor_report()` | `await stop_sensor_report(client, timeout_s=None)` | `SensorStopInfo` | 发送 `0x0603`；单点固件同时停止采集，手势固件可保留本地采集。 |
 | `parse_sensor_data_batch()` | `parse_sensor_data_batch(body)` | `SensorDataBatch` | 解析 `0x0605` 包体。 |
 | `wait_sensor_double_tap_event()` | `await wait_sensor_double_tap_event(client, timeout_s=None)` | `SensorDoubleTapEvent` | 等待 `0x0701` 普通双击事件。 |
 | `wait_sensor_key_double_press_event()` | `await wait_sensor_key_double_press_event(client, timeout_s=None)` | `SensorKeyDoublePressEvent` | 等待 `0x0703` 按键双击事件。 |
@@ -585,8 +671,14 @@ async with sdk.OpenZiloClient(address=ADDRESS) as ring:
 - `send_command(command, body=b"")`：只发送命令，不等待响应。
 - `request(command, response_command, body=b"", timeout_s=None)`：发送并等待指定响应。
 - `wait_for_command(command, timeout_s=None)`：等待设备主动上报或后续响应。
-- `add_packet_handler(command, handler)`：注册异步或同步包处理器。
+- `add_packet_handler(command, handler, queue_packets=True)`：注册异步或同步包处理器。设为 `False` 时独占该命令的接收，不再保留队列副本；不能与同命令的其他处理器或等待接口混用。处理器抛出的异常会记录到 `openzilo` 日志，不会影响其他包；断线时会取消未完成的异步处理器。
 - `remove_packet_handler(command, handler)`：移除处理器。
+
+接收队列每个命令默认最多 256 个包，可通过 `OpenZiloClient(receive_queue_size=...)` 调整。溢出会清理该命令的积压包，并通过等待接口报告 `ProtocolError`，不会将数据缺失当作成功。只使用回调时建议 `queue_packets=False`；处理器应尽快返回，异步处理器自行控制处理并发。
+
+同一响应命令的 `request()` 会串行执行。录音下载、自动接收、逐帧读取和清空等高层操作不能竞争同一连接，冲突时立即抛出 `ProtocolError`。手动组合低层录音接口时，应用仍需管理整段会话。OTA 期间拒绝其他任务的普通命令，自动校时应答除外；开始 OTA 前应停止录音及 IMU。
+
+普通下载失败或取消后会尽力发送结束命令，清理最多等待 2 秒，清理失败不覆盖原始异常。协议没有事务 ID，同命令超时后的迟到响应无法可靠归属；需要严格隔离时应重连后再发起新请求。
 
 ### `get_system_info()` 和 `parse_system_info()`
 
@@ -635,7 +727,9 @@ SDK 支持两条录音提取链路：
 | --- | --- | --- |
 | quick 链路 | `0x0509 -> 0x0504 -> 0x0505...`，缺帧时 `0x0506` 补帧 | `download_audio_file(..., quick=True)` |
 | 普通链路 | `0x0503 -> 0x0504`，循环 `0x0506 -> 0x0505`，最后 `0x0507 -> 0x0508` | `download_audio_file(..., quick=False)` |
-| 保存后自动上报 | 录音保存成功后直接连续 `0x0505...`；需要恢复时查询 `0x0504` 元数据，再用 `0x0506` 补帧 | `receive_auto_audio_file()` |
+| 旧固件保存后自动上报 | 录音保存成功后直接连续 `0x0505...`；需要恢复时查询 `0x0504` 元数据，再用 `0x0506` 补帧 | `receive_auto_audio_file()` |
+| 新固件保存后通知 | `0x050A` 后按普通链路下载 | `receive_auto_audio_file()` |
+| 实时录音 | `0x050D -> 0x050E` 订阅，随后 `0x050F -> 0x0510... -> 0x0511` | `receive_live_audio_file()` |
 
 普通链路低层函数 `get_audio_file_info()`、`read_audio_frame()`、`end_audio_extract()` 主要用于调试。
 
@@ -671,7 +765,7 @@ info, raw_audio = await sdk.download_audio_file(
 
 ### `receive_auto_audio_file()`
 
-作用：接收设备在录音保存成功后主动发送的完整录音。正常连续接收时不发送 `0x0503` 或 `0x0509`；需要恢复时会在内部查询文件元数据，适合在 BLE 已连接时即时接收刚完成的录音。
+作用：取得刚保存的完整录音。新固件收到 `0x050A` 后，SDK 主动普通下载并发送 `0x0507` 释放文件；旧固件接收主动 `0x0505`，仅在恢复时查询元数据。两种情况均返回原始文件，可交给 `save_audio_bundle()` 自动识别编码。
 
 签名：
 
@@ -689,9 +783,9 @@ file_index, raw_audio = await sdk.receive_auto_audio_file(
 
 返回：`tuple[int, bytes]`
 
-- 第一个值是首个有效 `0x0505` 中的 `file_index`。
+- 第一个值是 `0x050A` 或首个有效 `0x0505` 中的 `file_index`。
 - 第二个值是按 `frame_offset` 拼接完成的原始录音字节，可直接传给 `save_audio_bundle()`。
-- 自动上报不会预先携带 `0x0504`，因此函数不会返回 `AudioFileInfo`；恢复期间查询到的元数据只用于完整性校验和长度控制。
+- 旧固件自动上报不会预先携带 `0x0504`，因此函数不会返回 `AudioFileInfo`；恢复期间查询到的元数据只用于完整性校验和长度控制。
 
 接收行为：
 
@@ -720,6 +814,47 @@ bundle = sdk.save_audio_bundle(
 )
 ```
 
+### `receive_live_audio_file()`
+
+作用：订阅实时录音，接收用户按键录下的一段音频，然后退订。仅适用于新固件。
+
+签名：
+
+```python
+recording = await sdk.receive_live_audio_file(
+    ring,
+    on_packet=None,
+    on_subscribed=None,
+    timeout_s=60.0,
+    recording_timeout_s=70.0,
+)
+```
+
+参数：
+
+- `on_subscribed`：设备确认订阅后调用，适合提示用户开始录音。
+- `on_packet`：每收到一个校验通过的 `LiveAudioData` 调用一次。它是原始 Opus 包，整段是否完整要等函数返回才能确定。
+- `timeout_s`：订阅和等待录音开始的最长秒数。
+- `recording_timeout_s`：从开始到结束的总上限；两个包之间最多等待 5 秒。
+
+两个回调可以是同步函数或协程，应尽快返回，否则会拖慢接收。
+
+返回：`LiveAudioRecording`，其中 `data` 是完整 OP2C 文件，可直接传给 `save_audio_bundle()` 或 `decode_audio_to_wav()`。
+
+异常：
+
+- 订阅被拒绝（例如 ATT MTU 不足）或结束包带错误码：`DeviceError`。
+- 会话、序号、偏移不连续，结束包计数不符或设备报告丢帧：`ProtocolError`。
+- 等待期间 BLE 断开：`TransportError`。
+
+注意：
+
+- 订阅期间的录音**不保存到设备 Flash**，失败后无法从设备补回。
+- 函数退出时会尝试退订，包括出错和取消的情况。录音完整但退订失败时仍返回录音，并在 `openzilo` 日志记录警告；此时请断开重连，再做下载或固件升级。
+- 订阅时不能与下载、`receive_auto_audio_file()` 或固件升级同时运行。
+
+低层的 `set_live_audio_subscription(client, enabled)` 只负责开关订阅，需要自行处理 `0x050F`～`0x0511`。关闭订阅会中止正在发送的实时录音；断线后订阅自动失效。
+
 ### `clear_audio_files()`
 
 作用：删除设备内所有录音。
@@ -747,13 +882,14 @@ print(bundle.play_path)
 
 返回：`AudioBundle`
 
-常见异常：缺少 `ffmpeg` 或解码失败时抛出 `SpeexDecoderUnavailable` / `AudioDecodeError`。
+常见异常：缺少 `ffmpeg` 或解码失败时抛出 `SpeexDecoderUnavailable` / `OpusDecoderUnavailable` / `AudioDecodeError`。
 
 ### 录音解码辅助函数
 
 - `decode_audio_to_wav()`：返回 WAV 字节，适合自己管理文件保存。
 - `build_playable_audio()`：返回 `PlayableAudio`，包含字节、扩展名、MIME、解码说明。
-- `decode_speex_to_pcm()`：返回 `SpeexDecodeResult`，适合需要进一步处理 PCM 的场景。
+- `decode_speex_to_pcm()`、`decode_opus_to_pcm()`：返回 PCM 解码结果，适合需要进一步处理 PCM 的场景。
+- `parse_opus_recording()`、`build_opus_recording()`：OP2C 文件处理工具。
 - `build_wav_from_pcm()`：只负责给 PCM 包 WAV 头。
 - `decode_ogg_speex_with_ffmpeg()`：底层 ffmpeg 调用。
 - `parse_packetized_speex_stream()`、`split_raw_speex_packets()`、`build_ogg_speex()`：Speex 包处理工具。
@@ -941,7 +1077,7 @@ if __name__ == "__main__":
 
 ### 接收 10 批 IMU 数据
 
-以下示例假设设备已经处于手势模式。设备刚启动时，可先按“接收批量 IMU 数据”章节等待第一次有效单击，再调用 `start_sensor_report()`。
+以下示例假设设备已经处于手势模式。请先通过按键进入手势模式，再调用 `start_sensor_report()`；单击事件本身不能确认最终模式。旧单点固件无需此模式前置条件。
 
 ```python
 import asyncio
@@ -1002,21 +1138,23 @@ if __name__ == "__main__":
 
 ## 命令行调用
 
-`src/openzilo.py` 也带有简单 CLI，适合调试：
+`openzilo` 包也带有简单 CLI，适合调试：
 
 ```powershell
-python -m openzilo scan --address AA:BB:CC:DD:EE:FF
-python -m openzilo connect --address AA:BB:CC:DD:EE:FF
-python -m openzilo info --address AA:BB:CC:DD:EE:FF
-python -m openzilo audio-count --address AA:BB:CC:DD:EE:FF
-python -m openzilo audio-download --address AA:BB:CC:DD:EE:FF 0 audio
-python -m openzilo time-sync --address AA:BB:CC:DD:EE:FF --seconds 60
+uv run openzilo scan --address AA:BB:CC:DD:EE:FF
+uv run openzilo connect --address AA:BB:CC:DD:EE:FF
+uv run openzilo info --address AA:BB:CC:DD:EE:FF
+uv run openzilo audio-count --address AA:BB:CC:DD:EE:FF
+uv run openzilo audio-download --address AA:BB:CC:DD:EE:FF 0 audio
+uv run openzilo audio-receive --address AA:BB:CC:DD:EE:FF audio
+uv run openzilo audio-live --address AA:BB:CC:DD:EE:FF audio
+uv run openzilo time-sync --address AA:BB:CC:DD:EE:FF --seconds 60
 ```
 
 升级命令（需先替换占位值并完成[升级准备](#固件升级)）：
 
 ```powershell
-python -m openzilo ota-update --address "DEVICE_ADDRESS" "path/to/official-update.bin" --version V2.001.0002.0000 --sha256 "SHA256_FROM_RELEASE" --model "MODEL_FROM_RELEASE"
+uv run openzilo ota-update --address "DEVICE_ADDRESS" "path/to/official-update.bin" --version V2.001.0002.0000 --sha256 "SHA256_FROM_RELEASE" --model "MODEL_FROM_RELEASE"
 ```
 
 可用 `--timeout`、`--total-timeout` 和 `--reboot-timeout` 调整超时，默认分别为 30、600 和 90 秒。
@@ -1027,10 +1165,11 @@ CLI 不提供按时长自动采集 IMU 的命令；六轴数据请在业务脚�
 
 ### `TransportError: Install bleak to use BLE transport`
 
-当前 Python 环境没有安装 `bleak`。在运行脚本使用的同一个解释器中执行：
+当前 Python 环境没有安装 SDK 的依赖。通常是没有通过 `uv run` 运行脚本，或者用的不是 `uv sync` 创建的环境。在仓库目录执行：
 
 ```powershell
-python -m pip install bleak
+uv sync
+uv run python your_script.py
 ```
 
 ### 扫描不到设备或连接失败
@@ -1052,7 +1191,7 @@ python -m pip install bleak
 
 ### `receive_auto_audio_file()` 等待超时
 
-首帧超时表示 SDK 在限定时间内没有收到录音保存后主动上报的 `0x0505`。确认调用期间 BLE 始终连接，并在开始等待后再让用户长按录音、松开。若程序连接过晚，设备可能已经发送完毕，此时应调用 `get_audio_file_count()` 查询文件，再用 `download_audio_file()` 重新下载。
+首帧超时表示 SDK 在限定时间内没有收到录音保存后的 `0x050A` 或主动上报的 `0x0505`。确认调用期间 BLE 始终连接，并在开始等待后再让用户长按录音、松开。若程序连接过晚，设备可能已经发送完毕，此时应调用 `get_audio_file_count()` 查询文件，再用 `download_audio_file()` 重新下载。
 
 不要让 `receive_auto_audio_file()` 与 `download_audio_file()`、`read_audio_frame()` 或手工 `wait_for_command(0x0505)` 并发运行；它们消费同一个 `0x0505` 队列，可能造成某个接收流程超时或出现偏移缺口。
 

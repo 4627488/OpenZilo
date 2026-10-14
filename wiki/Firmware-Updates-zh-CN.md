@@ -8,7 +8,7 @@
 
 本说明面向固件 `V2.001.0002.0000`，版本号本身不代表升级包已经提供。请仅使用官方发布说明明确指定、与硬件匹配的升级包和升级工具。
 
-当前源码新增 `update_firmware()` 和 `ota-update`，用于应用固件升级，尚待发布和实机验证。页首 SDK 版本不代表已安装的 0.5.0 包包含此功能；可通过 `python -m openzilo ota-update --help` 检查。实际升级仍需官方提供与设备兼容的升级包。
+当前源码新增 `update_firmware()` 和 `ota-update`，用于应用固件升级，尚待发布和实机验证。页首 SDK 版本不代表已安装的 0.5.0 包包含此功能；可通过 `uv run openzilo ota-update --help` 检查。实际升级仍需官方提供与设备兼容的升级包。
 
 ## 官方升级发布后
 
@@ -20,10 +20,10 @@
 
 ## SDK 命令
 
-在已审阅的 SDK 源码目录运行 `python -m pip install -e .` 安装。完成上面的准备后执行：
+在已审阅的 SDK 源码目录运行 `uv sync`。完成上面的准备后执行：
 
 ```bash
-python -m openzilo ota-update --address "DEVICE_ADDRESS" "path/to/official-update.bin" --version V2.001.0002.0000 --sha256 "SHA256_FROM_RELEASE" --model "MODEL_FROM_RELEASE"
+uv run openzilo ota-update --address "DEVICE_ADDRESS" "path/to/official-update.bin" --version V2.001.0002.0000 --sha256 "SHA256_FROM_RELEASE" --model "MODEL_FROM_RELEASE"
 ```
 
 替换设备标识、文件路径、校验值和型号；文件名只是占位示例，不代表已有下载附件。`--version` 必须与升级包发布说明一致。可选参数 `--sha256` 和 `--model` 分别检查文件内容与已连接设备的型号，不代表已确认起始固件版本兼容。
