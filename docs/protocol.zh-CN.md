@@ -16,7 +16,7 @@
 | TX Characteristic | `6E400003-B5A3-F393-E0A9-E50E24DCCA9E` | 戒指通知 SDK |
 | RX Characteristic | `6E400002-B5A3-F393-E0A9-E50E24DCCA9E` | SDK 写入戒指 |
 
-SDK 按 MAC 地址扫描和连接设备，不依赖广播设备名。
+SDK 以 NUS 服务 UUID／Service Data UUID 或兼容名称即时识别戒指候选；指定设备地址／标识时发现即停止扫描，不要求名称。连接复用扫描对象，校验 NUS 服务与 RX／TX 能力、开启通知并等待 3 秒链路稳定后才允许命令。macOS 使用系统设备 UUID。协议命令与字段不受扫描方式影响。
 
 SDK 写入 RX Characteristic 时固定按 20 字节分片，最后一片按实际剩余长度发送。该分片是 SDK 的 BLE 发送策略，不是 v4 协议包边界，也不会关闭系统蓝牙栈的 MTU 协商。戒指发送的 TX Characteristic 通知可采用其他分片长度，调用方应交由 `OpenZiloClient` 或 `PacketStream` 重组。
 
