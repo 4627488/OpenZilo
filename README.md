@@ -139,6 +139,15 @@ asyncio.run(main())
 
 See the [examples](examples/) for audio download and IMU streaming.
 
+For live stereo PCM, install `uv sync --extra pcm` and consume
+`sdk.open_live_audio_stream(ring)` with `async with` / `async for`. It yields
+`LiveAudioStart`, 20 ms `LivePcmFrame` blocks (16 kHz, interleaved s16le stereo),
+then a verified `LiveAudioEnd`. Slow consumers fail explicitly; leaving the
+context stops an unfinished capture and attempts unsubscribe. This path uses
+PyAV and does not need an ffmpeg executable. See [the live PCM example](examples/live_pcm.py)
+and [SDK guide](docs/python-sdk.zh-CN.md#open_live_audio_stream实时-pcm--opus-事件流).
+Use `output="opus"` to consume original packets with only the base SDK.
+
 Install `ffmpeg` if you need Speex/Opus-to-WAV conversion. `audio-clear` deletes recordings from the device and requires `--yes`.
 
 ## Research and partners
