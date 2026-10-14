@@ -63,7 +63,7 @@ ffmpeg -version
 
 ### 最小连接示例
 
-把 `AA:BB:CC:DD:EE:FF` 替换成实际戒指设备地址／标识（macOS 使用系统 UUID）：
+把 `AA:BB:CC:DD:EE:FF` 替换成实际戒指 MAC 地址：
 
 ```python
 import asyncio
@@ -117,7 +117,7 @@ ring = sdk.OpenZiloClient(transport=transport)
 
 - 也需要安装 `bleak`。
 - 通常还需要 BlueZ 蓝牙栈，并确保当前用户有访问蓝牙设备的权限。
-- 如果扫描或连接权限异常，请检查蓝牙适配器、应用蓝牙权限和广播；BLE 设备不一定出现在系统蓝牙设置列表。
+- 如果扫描或连接权限异常，可先用系统蓝牙工具确认本机能看到该 MAC 地址。
 
 ### 音频解码
 
@@ -340,11 +340,8 @@ OpusDecoderUnavailable
 ```python
 BleDeviceInfo
 name: str | None    # BLE 广播名称，可能为空。
-address: str        # BLE 设备地址／标识，macOS 使用系统 UUID。
-rssi: int | None    # AdvertisementData 中的信号强度。
-service_uuids: tuple[str, ...]  # 累积的服务／Service Data UUID。
-matched_service: bool         # 已匹配 NUS 服务。
-matched_name: bool            # 已匹配兼容名称。
+address: str        # BLE MAC 地址。
+rssi: int | None    # 信号强度；部分 bleak 后端可能不提供。
 
 Packet
 command: int        # 命令字，例如 0x0605。
@@ -534,8 +531,8 @@ timestamp_ms: int  # 本固件发送秒级设备时间；SDK 保留此历史字�
 
 | 函数 | 签名 | 返回值 | 使用方式 |
 | --- | --- | --- | --- |
-| `scan_rings()` | `await scan_rings(address=None, timeout_s=30.0)` | `list[BleDeviceInfo]` | 扫描戒指候选；指定地址时发现即返回。 |
-| `connect_ring()` | `await connect_ring(address=None, device=None, scan_timeout_s=30.0, connect_timeout_s=30.0, command_timeout_s=10.0, auto_time_sync=False)` | `OpenZiloClient` | 创建并连接客户端，调用方负责 `disconnect()`。 |
+| `scan_rings()` | `await scan_rings(address=None, timeout_s=25.0)` | `list[BleDeviceInfo]` | 扫描 BLE 设备，可按 MAC 地址过滤。 |
+| `connect_ring()` | `await connect_ring(address, command_timeout_s=10.0, auto_time_sync=False)` | `OpenZiloClient` | 创建并连接客户端，调用方负责 `disconnect()`。 |
 | `get_system_info()` | `await get_system_info(client, timeout_s=None)` | `SystemInfo` | 读取设备系统信息。 |
 | `parse_system_info()` | `parse_system_info(body)` | `SystemInfo` | 解析 `0x0102` 包体，通常只用于测试或协议调试。 |
 | `enable_time_sync()` | `enable_time_sync(client)` | `None` | 注册 `0x0401` 自动应答处理器。 |
@@ -625,47 +622,25 @@ timestamp_ms: int  # 本固件发送秒级设备时间；SDK 保留此历史字�
 
 ### `scan_rings()`
 
-作用：即时回报附近戒指候选，并返回最终 `list[BleDeviceInfo]`。默认不再返回所有 BLE 设备，这是扫描行为变化。
+作用：扫描附近 BLE 设备，可按 MAC 地址过滤。
+
+签名：
 
 ```python
-devices = await sdk.scan_rings(
-    address=None,
-    timeout_s=30.0,
-    on_devices_changed=lambda devices: print([
-        (d.name or "语音戒指（名称待获取）", d.address, d.rssi, d.matched_service)
-        for d in devices
-    ]),
-)
+devices = await scan_rings(address=None, timeout_s=25.0)
 ```
 
-广播服务 UUID 或 Service Data UUID 包含 NUS 时，无名称也立即显示；否则兼容去除首尾空白、不区分大小写的精确 `ring`、`Open Zilo`，或包含 `Open Zilo-` 后紧跟非空白后缀的名称。不接受任意包含 ring 的名称。名字可能在后续扫描响应中出现。
+返回：`list[BleDeviceInfo]`
 
-同地址广播合并名称、UUID 和 RSSI；服务匹配优先，再按 RSSI 排序。排序不代表选中设备。`BleDeviceInfo` 保留 `name`、`address`、`rssi`，增加 `service_uuids: tuple[str, ...]`、`matched_service: bool`、`matched_name: bool`。内部原生设备引用不会出现在 repr、比较或 `dataclasses.asdict()` 中；不要访问或持久化内部引用。
+`timeout_s` 是本次扫描允许等待的最长时间，默认值为 25 秒；调用方可按需要显式传入其他正数。
 
-`timeout_s` 默认 30 秒，是上限。指定 `address` 后，只要发现该地址就停止扫描，不要求候选名称／UUID；可用冒号、连字符格式的 MAC 或 macOS 系统 UUID。
+常见异常：未安装 `bleak` 时抛出 `TransportError`。
 
-`on_devices_changed` 是同步轻量回调，首次候选立即回报，后续更新最多每 200 ms 一次，退出前回报最终快照。回调异常记录日志；应用负责转发到 UI 线程。同一事件循环只能有一个 SDK 扫描；重复启动会抛 `TransportError`。扫描异常、超时或取消都会清理扫描器，保留系统蓝牙适配器开启状态。
-
-取消会在清理完成和最终回调后传播 `asyncio.CancelledError`；取消任务不能返回最终列表，应保存回调快照。用户选择设备后取消并等待扫描退出，再连接选中对象：
+示例：
 
 ```python
-import asyncio
-
-async def select_and_connect(choose_device):
-    latest = []
-    def changed(devices):
-        latest[:] = devices  # UI 展示并让用户选择。
-
-    scan_task = asyncio.create_task(sdk.scan_rings(on_devices_changed=changed))
-    try:
-        selected = await choose_device(latest)  # 页面异步返回用户选中的 BleDeviceInfo。
-    finally:
-        scan_task.cancel()
-        try:
-            await scan_task
-        except asyncio.CancelledError:
-            pass
-    return await sdk.connect_ring(device=selected)  # 调用方负责 disconnect()。
+devices = await sdk.scan_rings(address="AA:BB:CC:DD:EE:FF")
+print(devices)
 ```
 
 ### `connect_ring()`
@@ -676,20 +651,13 @@ async def select_and_connect(choose_device):
 
 ```python
 ring = await connect_ring(
-    address="AA:BB:CC:DD:EE:FF",  # 或仅传 device=selected。
-    device=None,
-    scan_timeout_s=30.0,
-    connect_timeout_s=30.0,
+    address="AA:BB:CC:DD:EE:FF",
     command_timeout_s=10.0,
     auto_time_sync=False,
 )
 ```
 
-返回：已就绪的 `OpenZiloClient`。至少指定 `address` 或 `device`；两者同时指定时必须归一化后一致，未指定目标不会自动选列表第一台。
-
-已知地址无需预扫描，SDK 发现目标立即停止扫描，使用真实 BLEDevice 建连。找不到目标时报告 `SCANNING` 超时和扫描统计，不再用地址字符串触发隐式二次扫描。对象连接在同一进程／事件循环近期扫描后复用原生对象；跨事件循环或重新连接时按地址获取新对象。长时间保存、跨进程使用时只保存地址。
-
-连接依次报告 `SCANNING`、`CONNECTING`、`SUBSCRIBING`、`STABILIZING`、`READY`（对象复用跳过扫描）。验证 NUS 服务与 RX 写入／TX 通知能力后，安装通知并等待 3 秒，再确认链路仍连接才返回；就绪前不允许业务写入。扫描与 GATT 建连／订阅使用独立超时，失败和取消会清理连接，不重试或切换设备。`OpenZiloClient` 和 `NusClient` 接受 `device`、`scan_timeout_s`、`connect_timeout_s`；自定义 `transport` 优先，默认 BLE 参数不参与自定义建连。
+返回：已连接的 `OpenZiloClient`。
 
 注意：使用该函数时需要手动 `await ring.disconnect()`。更推荐用 `async with OpenZiloClient(...)` 自动释放连接。
 
@@ -1230,8 +1198,7 @@ if __name__ == "__main__":
 `openzilo` 包也带有简单 CLI，适合调试：
 
 ```powershell
-uv run openzilo scan --address AA:BB:CC:DD:EE:FF --timeout 30
-uv run openzilo connect --address AA:BB:CC:DD:EE:FF --scan-timeout 30 --connect-timeout 30
+uv run openzilo scan --address AA:BB:CC:DD:EE:FF
 uv run openzilo connect --address AA:BB:CC:DD:EE:FF
 uv run openzilo info --address AA:BB:CC:DD:EE:FF
 uv run openzilo audio-count --address AA:BB:CC:DD:EE:FF
@@ -1264,7 +1231,7 @@ uv run python your_script.py
 
 ### 扫描不到设备或连接失败
 
-- 默认扫描用 NUS 服务 UUID 或兼容名称识别候选；指定地址查找不要求名称或服务广播信息。
+- SDK 现在按 MAC 地址筛选，不依赖设备名。
 - 确认戒指正在广播，且没有被其他程序保持连接。
 - Windows 上可以尝试关闭再打开蓝牙适配器。
 - PyCharm 中确认解释器和安装依赖的虚拟环境一致。
@@ -1296,12 +1263,3 @@ uv run python your_script.py
 ### `clear_audio_files()` 为什么危险
 
 该函数会删除设备保存的所有录音，成功后无法通过 SDK 恢复。业务代码应把它放在明确的维护或测试入口中，不要在普通启动流程里自动调用。
-
-### 扫描与连接排查
-
-- `SCANNING`：统计 broadcasts=0 表示没有收到广播；有广播而 filtered>0、目标未发现表示收到其他设备但没有目标。检查权限、距离、设备广播及是否被其他应用占用。
-- `CONNECTING`：GATT 建连失败或 NUS 服务／RX、TX 能力缺失。NUS 是通用服务，不能证明唯一戒指身份。
-- `SUBSCRIBING`：通知开启失败。
-- `STABILIZING`：3 秒等待期间断连；失败后不能发送业务命令。
-
-Bleak `scanning_mode="active"` 是主动扫描，不等价于 Android LOW_LATENCY；不能承诺跨平台发现速度相同。macOS 12.0–12.2 对无服务过滤扫描有系统限制，见 [Bleak 扫描文档](https://bleak.readthedocs.io/en/latest/api/scanner.html)。

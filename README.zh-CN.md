@@ -120,8 +120,6 @@ uv run openzilo scan --timeout 10
 uv run openzilo info --address AA:BB:CC:DD:EE:FF
 ```
 
-BLE 扫描收到广播即按 NUS UUID 或兼容名称回报戒指候选，名称可稍后补充。默认扫描上限 30 秒，指定设备地址／标识时发现即返回。使用 `scan_rings(on_devices_changed=...)` 即时展示，由用户选择并结束扫描后，通过 `connect_ring(device=selected)` 复用扫描对象；已知地址直接连接无需预扫描，未发现目标不会隐式二次扫描。连接验证 NUS、开启通知并等待 3 秒稳定窗口后才允许命令。连接 CLI 支持 `--scan-timeout`、`--connect-timeout`，macOS 使用设备 UUID。默认扫描返回戒指候选，这改变了原来返回所有 BLE 设备的行为。详见 [SDK 指南](docs/python-sdk.zh-CN.md#scan_rings)。
-
 把示例地址换成 `scan` 返回的地址。在自己的 uv 项目中使用 SDK，运行 `uv add git+https://github.com/ziloai/openzilo`。不用 uv 时，`python -m pip install -e .` 同样可用。
 
 Python 调用示例：

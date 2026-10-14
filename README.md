@@ -119,8 +119,6 @@ uv run openzilo scan --timeout 10
 uv run openzilo info --address AA:BB:CC:DD:EE:FF
 ```
 
-BLE discovery reports ring candidates as advertisements arrive, using the NUS service UUID or compatible names (`ring`, `Open Zilo`, or `Open Zilo-` with a non-whitespace suffix). Names can arrive later. The default scan limit is 30 seconds; an explicit address/identifier returns as soon as found. Use `scan_rings(on_devices_changed=...)` for live results and `connect_ring(device=selected)` to reuse a user-selected discovery object after stopping the scan. Address connections scan once and fail clearly if the target is absent. Connections validate NUS, enable notifications, and wait 3 seconds before commands are allowed. CLI connection commands accept `--scan-timeout` and `--connect-timeout`; macOS uses a device UUID. Default scans now return ring candidates rather than every BLE device. See the [SDK guide](docs/python-sdk.zh-CN.md#scan_rings).
-
 Replace the example address with one returned by `scan`. To use the SDK from your own uv project, run `uv add git+https://github.com/ziloai/openzilo`. Without uv, `python -m pip install -e .` also works.
 
 In Python:

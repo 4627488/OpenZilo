@@ -57,7 +57,7 @@ OpenZiloClient            按命令分发响应和主动上报
 get_system_info() / download_audio_file() / wait_sensor_data() ...
 ```
 
-`NusClient` 使用 `bleak` 事件扫描，以 NUS UUID 或兼容名称报告候选，按地址查找时发现即返回。复用真实扫描对象建连，验证 NUS、开启通知并等待 3 秒稳定窗口后就绪；不会在未发现目标后通过地址字符串触发隐式二次扫描。写入 NUS RX 特征值时，SDK 把数据切成最多 20 字节的片段；这不会改变系统蓝牙栈的 MTU 协商。戒指从 NUS TX 发来的通知没有相同的长度保证。
+`NusClient` 使用 `bleak`，按设备地址扫描和连接，不依赖广播名称。写入 NUS RX 特征值时，SDK 把数据切成最多 20 字节的片段；这不会改变系统蓝牙栈的 MTU 协商。戒指从 NUS TX 发来的通知没有相同的长度保证。
 
 `PacketStream.feed()` 接收任意长度的通知数据。一个协议包可以跨多次通知，多包也可以连续到达。它按包头中的 `body_length` 截取完整包，跳过 magic 之前的杂字节；包头、CRC 或长度不合法时抛出 `ProtocolError`。包体上限是 5120 字节。
 
