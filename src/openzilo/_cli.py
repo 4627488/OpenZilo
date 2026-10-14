@@ -72,7 +72,7 @@ async def cmd_scan(args: argparse.Namespace) -> None:
     def changed(devices):
         for device in devices:
             if seen.get(device.address) != device:
-                name = device.name or "语音戒指（名称待获取）"
+                name = device.name or "Ring (name pending)"
                 print(f"name={name!r} address={device.address} rssi={device.rssi} "
                       f"matched_service={device.matched_service}", flush=True)
                 seen[device.address] = device

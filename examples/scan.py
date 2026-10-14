@@ -6,7 +6,7 @@ import openzilo as sdk
 
 def changed(devices):
     for device in devices:
-        print(device.name or "语音戒指（名称待获取）", device.address,
+        print(device.name or "Ring (name pending)", device.address,
               device.rssi, device.matched_service)
 
 
