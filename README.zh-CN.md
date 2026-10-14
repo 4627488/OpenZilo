@@ -140,6 +140,13 @@ asyncio.run(main())
 
 [examples](examples/) 中还有下载录音和读取 IMU 数据流的例子。
 
+实时双声道 PCM 可通过 `uv sync --extra pcm` 安装解码依赖，再用
+`async with sdk.open_live_audio_stream(ring)` 和 `async for` 消费 START、
+`LivePcmFrame`、已验证 END。每帧为 20 ms、16 kHz、双声道交错 s16le PCM。
+消费者过慢会明确报错，退出上下文会停止未完成的接收并尝试退订。
+该路径使用 PyAV，不需要 ffmpeg 可执行文件；`output="opus"` 模式只需基础 SDK。
+见 [实时 PCM 示例](examples/live_pcm.py) 和 [SDK 手册](docs/python-sdk.zh-CN.md#open_live_audio_stream实时-pcm--opus-事件流)。
+
 如果需要将 Speex 或双声道 Opus 转成 WAV，请安装 `ffmpeg`。`audio-clear` 会删除设备上的录音，调用时必须显式提供 `--yes`。
 
 ## 论文与合作机构

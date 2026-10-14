@@ -30,6 +30,11 @@ openzilo = "openzilo._cli:run"
 Homepage = "https://github.com/ziloai/openzilo"
 Repository = "https://github.com/ziloai/openzilo"
 
+[project.optional-dependencies]
+pcm = [
+    "av>=14",
+]
+
 [tool.setuptools]
 package-dir = { "" = "src" }
 
